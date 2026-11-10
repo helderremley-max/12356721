@@ -67,6 +67,8 @@ interface PartTemplate {
   /** Class per geometry group (or a single entry when ungrouped). */
   classes: PartClass[];
   originals: THREE.Material[];
+  /** Source node chain, kept on the mesh for debugging. */
+  label: string;
   /** Wheel parts that steer but don't roll (brake calipers). */
   fixed?: boolean;
 }
@@ -930,7 +932,7 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
       classes = classes.map((c) => (c === 'head' && (centre.z - midZ) / halfL > 0.3 ? 'tail' : c));
       if (classes.includes('head')) headCentres.push(centre);
     }
-    return { geometry, matrix, classes, originals, fixed: wheel && /caliper/i.test(chain) };
+    return { geometry, matrix, classes, originals, label: `${chain} | ${originals.map((o) => o.name).join(",")}`, fixed: wheel && /caliper/i.test(chain) };
   };
 
   // A rig needs wheels on both axles and both sides; anything less renders them as body.
@@ -979,6 +981,8 @@ function meshFor(part: PartTemplate, mats: CarMaterialSet): THREE.Mesh {
   const materials = part.classes.map((cls, i) => (cls === 'keep' ? part.originals[Math.min(i, part.originals.length - 1)] : mats.get(cls)));
   const mesh = new THREE.Mesh(part.geometry, materials.length === 1 && !part.geometry.groups.length ? materials[0] : materials);
   part.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+  mesh.userData.classes = part.classes;
+  mesh.userData.label = part.label;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
