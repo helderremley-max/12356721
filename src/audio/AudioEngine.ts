@@ -43,6 +43,8 @@ export interface AudioFrame {
   slip: number;
   /** Closest traffic car: signed lateral offset and longitudinal distance (m), or null. */
   traffic: { dx: number; ds: number; v: number } | null;
+  /** Engine state from the physics gearbox; without it the sound runs its own gearbox. */
+  engine?: { rpm: number; gear: number; shifting: boolean };
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -300,7 +302,15 @@ export class AudioEngine {
     const p = this.profile;
     const tc = 0.035;
 
-    const targetRpm = this.gearboxRpm(f.speed, f.topSpeed, f.throttle, dt);
+    let targetRpm: number;
+    if (f.engine) {
+      if (f.engine.gear > this.gear) this.onShift(f.throttle);
+      this.gear = f.engine.gear;
+      this.shiftT = f.engine.shifting ? 0.3 : 0;
+      targetRpm = f.engine.rpm;
+    } else {
+      targetRpm = this.gearboxRpm(f.speed, f.topSpeed, f.throttle, dt);
+    }
     // Revs flare on throttle and sag on shifts; the flywheel smooths them.
     const shiftCut = this.shiftT > 0.2 && !p.cvt;
     this.rpm += (targetRpm + f.throttle * 180 - this.rpm) * Math.min(1, dt * (shiftCut ? 14 : 7));
