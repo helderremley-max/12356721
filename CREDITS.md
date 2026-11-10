@@ -4,6 +4,7 @@
 | --- | --- | --- | --- |
 | Venice Sunset HDRI | Greg Zaal, [Poly Haven](https://polyhaven.com/a/venice_sunset) | CC0 | `scripts/fetch-assets.mjs` |
 | Shanghai Bund HDRI | Greg Zaal, [Poly Haven](https://polyhaven.com/a/shanghai_bund) | CC0 | `scripts/fetch-assets.mjs` |
+| Neuer Zollhof HDRI (lobby showroom) | Greg Zaal, [Poly Haven](https://polyhaven.com/a/neuer_zollhof) | CC0 | `scripts/fetch-assets.mjs` |
 | Car Kit (fallback bodies) | [Kenney](https://kenney.nl/assets/car-kit), via the [shorepine/kenney](https://github.com/shorepine/kenney) mirror | CC0 | `scripts/fetch-assets.mjs` |
 
 ## Player cars (`public/assets/vehicles/garage`)

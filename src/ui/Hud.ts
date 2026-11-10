@@ -1,8 +1,10 @@
 import type { ScoreEvent } from '../gameplay/Scoring';
+import { ICONS } from './icons';
 
 export interface HudState {
   speedKmh: number;
   fps: number;
+  showFps: boolean;
   laneLabel: string;
   pocketInfo: string;
   score: number;
@@ -10,6 +12,12 @@ export interface HudState {
   /** 0..1 of the combo timer left. */
   comboLeft: number;
   km: number;
+  /** Engine speed 0..1 of the redline. */
+  rpm01: number;
+  gear: string;
+  abs: boolean;
+  esp: boolean;
+  tcs: boolean;
 }
 
 export type TouchAction = 'throttle' | 'brake' | 'left' | 'right';
@@ -23,13 +31,18 @@ const POPUP: Record<string, string> = {
   crash: 'КОМБО ПОТЕРЯНО',
 };
 
-/** DOM overlay: loading screen, speed, score/combo, event popups, touch pedals. */
+/** Tachometer arc: 270° sweep (from bottom-left, clockwise) drawn as an SVG stroke. */
+const ARC_LEN = 2 * Math.PI * 44 * (270 / 360);
+
+/** DOM overlay: loading screen, speedometer, score/combo, event popups, touch controls. */
 export class Hud {
   private root: HTMLElement;
   private loader: HTMLElement;
   private loaderBar: HTMLElement;
   private loaderLabel: HTMLElement;
   private speed: HTMLElement;
+  private gear: HTMLElement;
+  private rpmArc: SVGCircleElement;
   private info: HTMLElement;
   private car: HTMLElement;
   private score: HTMLElement;
@@ -37,10 +50,11 @@ export class Hud {
   private comboBar: HTMLElement;
   private km: HTMLElement;
   private popups: HTMLElement;
+  private lamps: Record<'abs' | 'esp' | 'tcs', HTMLElement>;
   private visible = true;
-  private platform = '';
   onPause: () => void = () => {};
   onTouch: (action: TouchAction, down: boolean) => void = () => {};
+  onShift: (dir: 1 | -1) => void = () => {};
 
   constructor(parent: HTMLElement) {
     parent.insertAdjacentHTML(
@@ -51,17 +65,32 @@ export class Hud {
          <div class="loader__label">Загрузка…</div>
        </div>
        <div class="hud hud--hidden" id="hud">
-         <div class="hud__car"><b></b><small></small><em></em></div>
-         <div class="hud__score"><b>0</b><span class="hud__mult">×1.00</span><i><u></u></i><small class="hud__km">0.00 км</small></div>
+         <div class="hud__car"><b></b><small></small></div>
+         <div class="hud__score">
+           <div class="hud__score-main"><b>0</b><span class="hud__mult">×1.00</span></div>
+           <i class="hud__combo"><u></u></i>
+         </div>
+         <div class="hud__km">0.00 км</div>
          <div class="hud__popups"></div>
-         <div class="hud__speed"><b>0</b><small>км/ч</small></div>
+         <div class="gauge">
+           <svg class="gauge__svg" viewBox="0 0 100 100" aria-hidden="true">
+             <circle class="gauge__track" cx="50" cy="50" r="44" />
+             <circle class="gauge__rpm" cx="50" cy="50" r="44" />
+             <circle class="gauge__red" cx="50" cy="50" r="44" />
+           </svg>
+           <div class="gauge__speed"><b>0</b><small>км/ч</small></div>
+           <div class="gauge__gear">N</div>
+           <div class="gauge__lamps"><span data-lamp="abs">ABS</span><span data-lamp="esp">ESP</span><span data-lamp="tcs">TCS</span></div>
+         </div>
          <div class="hud__info"></div>
-         <button class="hud__pause" aria-label="Пауза">❚❚</button>
+         <button class="hud__pause" aria-label="Пауза">${ICONS.pause}</button>
          <div class="touch">
-           <button class="touch__btn touch__left" data-t="left" aria-label="Влево">◀</button>
-           <button class="touch__btn touch__right" data-t="right" aria-label="Вправо">▶</button>
-           <button class="touch__btn touch__brake" data-t="brake" aria-label="Тормоз">ТОРМОЗ</button>
-           <button class="touch__btn touch__gas" data-t="throttle" aria-label="Газ">ГАЗ</button>
+           <button class="touch__btn touch__left" data-t="left" aria-label="Влево">${ICONS.left}</button>
+           <button class="touch__btn touch__right" data-t="right" aria-label="Вправо">${ICONS.right}</button>
+           <button class="touch__btn touch__brake" data-t="brake" aria-label="Тормоз"><span>ТОРМОЗ</span></button>
+           <button class="touch__btn touch__gas" data-t="throttle" aria-label="Газ"><span>ГАЗ</span></button>
+           <button class="touch__shift touch__shift--up" data-shift="1" aria-label="Передача вверх">+</button>
+           <button class="touch__shift touch__shift--down" data-shift="-1" aria-label="Передача вниз">−</button>
          </div>
        </div>`,
     );
@@ -69,15 +98,20 @@ export class Hud {
     this.loaderBar = this.loader.querySelector('.loader__bar')!;
     this.loaderLabel = this.loader.querySelector('.loader__label')!;
     this.root = parent.querySelector('#hud')!;
-    this.speed = this.root.querySelector('.hud__speed b')!;
-    this.info = this.root.querySelector('.hud__info')!;
-    this.car = this.root.querySelector('.hud__car')!;
-    this.score = this.root.querySelector('.hud__score b')!;
-    this.mult = this.root.querySelector('.hud__mult')!;
-    this.comboBar = this.root.querySelector('.hud__score i u')!;
-    this.km = this.root.querySelector('.hud__km')!;
-    this.popups = this.root.querySelector('.hud__popups')!;
-    this.root.querySelector('.hud__pause')!.addEventListener('click', () => this.onPause());
+    const q = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T & Element>(s)! as T;
+    this.speed = q('.gauge__speed b');
+    this.gear = q('.gauge__gear');
+    this.rpmArc = q<SVGCircleElement>('.gauge__rpm');
+    this.info = q('.hud__info');
+    this.car = q('.hud__car');
+    this.score = q('.hud__score-main b');
+    this.mult = q('.hud__mult');
+    this.comboBar = q('.hud__combo u');
+    this.km = q('.hud__km');
+    this.popups = q('.hud__popups');
+    this.lamps = { abs: q('[data-lamp="abs"]'), esp: q('[data-lamp="esp"]'), tcs: q('[data-lamp="tcs"]') };
+    this.rpmArc.style.strokeDasharray = `0 999`;
+    q('.hud__pause').addEventListener('click', () => this.onPause());
 
     // Pedals: pointer events cover touch and mouse; multi-touch works since each button tracks its own pointer.
     for (const btn of this.root.querySelectorAll<HTMLElement>('.touch__btn')) {
@@ -91,6 +125,9 @@ export class Hud {
         set(true);
       });
       for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(ev, () => set(false));
+    }
+    for (const btn of this.root.querySelectorAll<HTMLElement>('.touch__shift')) {
+      btn.addEventListener('pointerdown', () => this.onShift(Number(btn.dataset.shift) as 1 | -1));
     }
     if (matchMedia('(pointer: coarse)').matches) this.root.classList.add('hud--touch');
   }
@@ -110,23 +147,25 @@ export class Hud {
     this.root.style.display = this.visible ? '' : 'none';
   }
 
-  /** In-run HUD vs. menu (only the car badge stays visible under the menu). */
   setPlaying(on: boolean): void {
     this.root.classList.toggle('hud--hidden', !on);
   }
 
-  setPlatform(label: string): void {
-    this.platform = label;
+  /** Manual gearbox shows the touch shift buttons. */
+  setManual(on: boolean): void {
+    this.root.classList.toggle('hud--manual', on);
   }
 
-  setCar(name: string, tagline: string, credit = ''): void {
+  /** Red zone of the tachometer starts at this fraction of the scale. */
+  setRedline(from01: number): void {
+    const red = this.root.querySelector<SVGCircleElement>('.gauge__red')!;
+    red.style.strokeDasharray = `${ARC_LEN * (1 - from01)} 999`;
+    red.style.strokeDashoffset = `${-ARC_LEN * from01}`;
+  }
+
+  setCar(name: string, tagline: string): void {
     this.car.querySelector('b')!.textContent = name;
     this.car.querySelector('small')!.textContent = tagline;
-    this.car.querySelector('em')!.textContent = credit;
-    // Restart the slide-in animation.
-    this.car.classList.remove('hud__car--in');
-    void this.car.offsetWidth;
-    this.car.classList.add('hud__car--in');
   }
 
   event(e: ScoreEvent): void {
@@ -146,13 +185,17 @@ export class Hud {
   update(s: HudState): void {
     if (!this.visible) return;
     this.speed.textContent = String(Math.round(s.speedKmh));
+    this.gear.textContent = s.gear;
+    this.rpmArc.style.strokeDasharray = `${ARC_LEN * Math.min(1, Math.max(0, s.rpm01))} 999`;
+    this.root.classList.toggle('hud--redline', s.rpm01 > 0.94);
     this.score.textContent = fmt(s.score);
     this.mult.textContent = `×${s.multiplier.toFixed(2)}`;
     this.mult.classList.toggle('hud__mult--hot', s.multiplier >= 3);
     this.comboBar.style.width = `${Math.round(s.comboLeft * 100)}%`;
     this.km.textContent = `${s.km.toFixed(2)} км`;
-    this.info.textContent = `${s.laneLabel}${s.pocketInfo ? ' · ' + s.pocketInfo : ''} · ${Math.round(s.fps)} FPS${
-      this.platform ? ` · SDK: ${this.platform}` : ''
-    }`;
+    this.lamps.abs.classList.toggle('lamp--on', s.abs);
+    this.lamps.esp.classList.toggle('lamp--on', s.esp);
+    this.lamps.tcs.classList.toggle('lamp--on', s.tcs);
+    this.info.textContent = `${s.laneLabel}${s.pocketInfo ? ' · ' + s.pocketInfo : ''}${s.showFps ? ` · ${Math.round(s.fps)} FPS` : ''}`;
   }
 }

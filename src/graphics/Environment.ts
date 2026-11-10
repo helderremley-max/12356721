@@ -115,6 +115,8 @@ export class Environment {
   private activeSky: Sky | null = null;
   private pmrem: THREE.PMREMGenerator;
   private skyEnv: THREE.WebGLRenderTarget | null = null;
+  private baseFog = 0.0007;
+  private drawDistance = 1100;
 
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
@@ -238,11 +240,33 @@ export class Environment {
     this.sun.intensity = cfg.sunIntensity;
 
     const fog = scene.fog as THREE.FogExp2;
-    fog.density = cfg.fogDensity;
+    this.baseFog = cfg.fogDensity;
+    fog.density = this.fogDensity();
     // Keep the HDRI horizon hue but pin its brightness: raw horizon radiance is
     // far brighter than lit geometry and would wash the scene out.
     const lum = Math.max(1e-4, env.horizon.r * 0.2126 + env.horizon.g * 0.7152 + env.horizon.b * 0.0722);
     fog.color.copy(env.horizon).multiplyScalar(cfg.fogLuminance / lum).multiply(cfg.fogTint);
+  }
+
+  private fogDensity(): number {
+    // Short draw distances get extra fog so the end of the streamed road fades out.
+    return this.baseFog + Math.max(0, 1.5 / this.drawDistance - 1.5 / 1100);
+  }
+
+  setDrawDistance(m: number): void {
+    this.drawDistance = m;
+    (this.scene.fog as THREE.FogExp2).density = this.fogDensity();
+  }
+
+  /** Shadow map resolution; 0 turns the sun's shadows off. */
+  setShadowSize(size: number): void {
+    const on = size > 0;
+    if (this.sun.castShadow !== on) this.sun.castShadow = on;
+    if (on && this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.sun.shadow.mapSize.set(size, size);
+    }
   }
 
   /** Keep the shadow frustum centred just ahead of the camera. */
