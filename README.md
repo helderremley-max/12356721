@@ -35,22 +35,43 @@ If a download fails, the game falls back to the next source: Sketchfab → Kenne
 
 ### Controls
 
-The game opens on a main menu over the live scene: pick a car (‹ ›), a map, and press **ПОЕХАЛИ** (or Enter/Space).
+The game opens in the lobby: the car stands in a photoreal evening courtyard (Poly Haven `neuer_zollhof`, projected
+onto the ground with `GroundedSkybox`; drag to orbit). Pick a car (‹ ›), press **Играть**, choose a track.
 
 | Key | Action |
 | --- | --- |
 | W / ↑, S / ↓ | throttle / brake |
-| A / ←, D / → | steer freely (hold to change lanes, tap to nudge; the car straightens itself when released) |
-| Esc / P | pause (continue · restart · finish the run) |
-| 1–9, 0 | switch car in the menu (ten cars, worst → best) |
-| C | chase ↔ bumper camera |
+| A / ←, D / → | steer (hold to change lanes; with the arcade/standard style the car straightens itself when released) |
+| E / Shift, Q / Ctrl | gear up / down (manual gearbox) |
+| Esc / P | pause (continue · restart · finish the run); Esc also goes back from lobby sub-screens |
+| Enter / Space | lobby → track choice → start |
+| 1–9, 0 | preview a car in the lobby (ten cars, worst → best) |
+| C | camera: chase → far → bumper |
 | N | cycle lighting (debug) |
 | H | toggle HUD |
 
-On touch screens the HUD shows ◀ ▶ steering buttons and ГАЗ / ТОРМОЗ pedals.
+On touch screens the HUD shows ◀ ▶ steering buttons, ГАЗ / ТОРМОЗ pedals and +/− shift buttons for the manual gearbox.
 
-URL params: `?map=sunset|rush|night`, `?car=e34`, `?play=1` (skip the menu), `?platform=local` (skip the SDK),
-`?intro=0` (skip the crane shot), `?s=600` (start 600 m down the road), `?cam=bumper`.
+URL params: `?map=sunset|rush|night`, `?car=e34`, `?play=1` (skip the lobby), `?platform=local` (skip the SDK),
+`?intro=0` (skip the crane shot), `?s=600` (start 600 m down the road), `?cam=bumper|far`.
+
+### Menu, settings, economy
+
+- Top bar: player name (from the SDK when signed in), shop · screen title · settings, cash with a rewarded-video
+  button (+5 000).
+- Lobby: characteristics card (top speed, power, 0–100 measured by the real physics, weight, drive), **Тюнинг** and
+  **Играть**, or **Купить** / **Тест-драйв** (after a rewarded video) for cars you don't own.
+- Tuning (owned cars, free): paint (14 colours), rim colour, window tint, ride height; saved per car.
+- Shop: every car with price and status. Start cash 20 000; a run pays `0.35 × score + 400 × km` (half after a
+  wreck, nothing in a test drive or with ghost traffic). Prices are in `src/gameplay/economy.ts`.
+- Settings (saved with the profile):
+  - **Игра** — volume, camera view, camera inertia, FPS counter;
+  - **Машина** — gearbox (auto / manual), driving style (arcade / standard / simulator), drive (car's own / FWD /
+    RWD / AWD), ABS / ESP / TCS;
+  - **Трафик** — density (×0.55 … ×1.9 of the track's own), flow speed (×0.8 / 1 / 1.2), bot lane changes, ghost bots
+    (no collisions, no points);
+  - **Графика** — quality (pixel-ratio cap, shadow map 0/1k/2k/4k, MSAA 0/0/4/8, bloom and lens effects), render
+    resolution 40–100 %, FPS cap 30 / 60 / unlimited, draw distance 300–1100 m (road streaming + fog).
 
 ### Maps
 
@@ -146,8 +167,20 @@ npx @yandex-games/sdk-dev-proxy -p dist --dev-mode=true   # https://localhost:80
 
 **Yandex Games SDK adapter (done, ahead of Step 6)** — see above.
 
-**Step 3 — chassis physics (done)** — weight transfer between axles, tyre slip, drivetrain-specific traction, lateral
-and longitudinal load driving body roll / dive / squat.
+**Step 3 — chassis physics (reworked)** — `PlayerCar` is a dynamic bicycle model with weight transfer, friction
+circles and a Pacejka-style tyre curve. The old version let the nose swing far faster than the car's path (yaw rate
+up to 1.4 rad/s at 150 km/h, slip capped by force), so the car darted left/right and RWD cars spun under power. Now:
+
+- the rear axle is stiffer and grippier than the front (mild understeer), which keeps the yaw motion damped at speed;
+- full steering lock shrinks with speed to what the grip can actually use, so a key press at 200 km/h is a lane
+  change, not a spin (yaw rate at 150 km/h ≈ 0.3 rad/s, body slip ≤ 0.06 rad, settles in 1–2.5 s);
+- gearbox with a power curve (auto or manual, CVT for the hybrid); top speeds match the spec; the engine sound
+  follows the physics revs and gears;
+- ABS (no locked wheels), TCS (drive force trimmed before wheelspin), ESP (yaw-rate and slip-angle control through a
+  corrective yaw moment with a throttle cut); HUD lamps light up when they intervene;
+- driving style: arcade (more grip, strong lane-keeping, ESP always on), standard (straightens on release, caps the
+  lane-change angle), simulator (raw physics);
+- two physics substeps per 120 Hz tick.
 
 **Step 4 — traffic without walls (done)**
 
@@ -167,8 +200,9 @@ and longitudinal load driving body roll / dive / squat.
 
 **Menu, audio, image**
 
-- Main menu over the live scene (the car cruises on an autopilot, the camera sweeps around it), garage with stats,
-  three maps, volume; pause and results screens; best score and distance saved through the SDK.
+- Lobby in a showroom scene (`src/graphics/Showroom.ts`), shop, tuning, settings with tabs, track choice; pause and
+  results screens (with the cash earned); best score and distance saved through the SDK. Condensed UI font: Oswald
+  (SIL OFL, bundled in `src/assets/fonts`).
 - Procedural Web Audio, no samples: an engine synth per car (cylinder count, idle/redline, gear count, turbo, grit)
   driven by a simulated gearbox with shift cuts, load-dependent timbre, turbo whistle and blow-off, overrun
   crackles, CVT whine for the hybrid; tyre squeal, wind, road rumble, traffic pass-by whoosh, impacts and score cues.

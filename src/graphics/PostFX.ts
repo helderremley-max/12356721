@@ -106,6 +106,17 @@ export class PostFX {
     this.cinematic.uniforms.uVignette.value = night ? 0.45 : 0.35;
   }
 
+  /** Graphics quality: MSAA samples, bloom and the speed lens effects. */
+  setQuality(samples: number, bloom: boolean, lens: boolean): void {
+    this.bloom.enabled = bloom;
+    this.cinematic.enabled = lens;
+    for (const rt of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+      if (rt.samples === samples) continue;
+      rt.samples = samples;
+      rt.dispose();
+    }
+  }
+
   /** speed01: 0 at standstill, 1 at top speed. */
   update(speed01: number, time: number): void {
     this.cinematic.uniforms.uSpeed.value = THREE.MathUtils.clamp(speed01, 0, 1);
