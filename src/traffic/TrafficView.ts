@@ -16,6 +16,26 @@ export const TRAFFIC_TYPES: TrafficType[] = TRAFFIC_CARS.map((t) => ({
 const BLINK_GEO = new THREE.BoxGeometry(0.17, 0.08, 0.05);
 // HDR amber: well above the bloom threshold so indicators glow like real bulbs.
 const BLINK_ON = new THREE.Color(9, 3.6, 0.3);
+const GHOST_OPACITY = 0.35;
+
+/** Fades a model to a see-through ghost and back; the original blend state is kept in userData. */
+function ghostModel(root: THREE.Object3D, on: boolean): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      const saved = (m.userData.ghostSaved ??= { transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite }) as {
+        transparent: boolean;
+        opacity: number;
+        depthWrite: boolean;
+      };
+      m.transparent = on || saved.transparent;
+      m.opacity = on ? saved.opacity * GHOST_OPACITY : saved.opacity;
+      m.depthWrite = on ? false : saved.depthWrite;
+      m.needsUpdate = true;
+    }
+  });
+}
 
 class Pooled {
   readonly blinkL: THREE.MeshBasicMaterial;
@@ -62,6 +82,7 @@ export class TrafficView {
   private readonly active = new Map<number, Pooled>();
   private readonly pending = new Set<number>();
   private night = false;
+  private ghost = false;
   private time = 0;
 
   constructor(
@@ -98,6 +119,7 @@ export class TrafficView {
     });
     const p = new Pooled(model, spec);
     p.model.materials.lights.setNight(this.night);
+    if (this.ghost) ghostModel(model.root, true);
     return p;
   }
 
@@ -152,6 +174,14 @@ export class TrafficView {
     this.night = on;
     for (const p of this.active.values()) p.model.materials.lights.setNight(on);
     for (const list of this.free.values()) for (const p of list) p.model.materials.lights.setNight(on);
+  }
+
+  /** Ghost traffic: see-through bots (settings → «Прозрачные боты»). */
+  setGhost(on: boolean): void {
+    if (on === this.ghost) return;
+    this.ghost = on;
+    for (const p of this.active.values()) ghostModel(p.model.root, on);
+    for (const list of this.free.values()) for (const p of list) ghostModel(p.model.root, on);
   }
 
   update(dt: number, cars: readonly TrafficCar[], origin: number): void {

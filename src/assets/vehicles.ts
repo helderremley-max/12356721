@@ -115,7 +115,7 @@ export const PLAYER_CARS: VehicleSpec[] = [
     tagline: 'RWD · 64 л.с. · ржавая классика, всё впереди',
     sources: [custom('zhiga'), garage('kopeyka'), kenney('sedan')],
     length: 4.13, width: 1.62, height: 1.44, wheelDiameter: 0.58,
-    paint: -1, metallic: 0, rim: 0x8a8d90, tint: 0.2, stance: 0, flip: true,
+    paint: -1, metallic: 0, rim: 0x8a8d90, tint: 0.45, stance: 0, flip: true,
     handling: handling({ massKg: 1030, kw: 47, topKmh: 150, drivetrain: 'RWD', grip: 8.6, yawLag: 0.2, rack: [3.4, 1.8], stiffness: 0 }),
   },
   {
@@ -212,6 +212,8 @@ export interface TrafficSpec {
   wheelDiameter: number;
   paints: number[];
   weight: number;
+  /** Model faces backwards after auto-detection. */
+  flip?: boolean;
 }
 
 const CIVIL_PAINTS = [0xdedede, 0x1a1a1c, 0x8c9096, 0x5b1a1a, 0x23324a, 0xc9c3b4, 0x2f3d33, 0x7a7d80];
@@ -227,9 +229,14 @@ export const TRAFFIC_CARS: TrafficSpec[] = [
   { id: 'red', sources: [traffic('redcar'), kenney('sedan')], length: 4.4, width: 1.78, height: 1.45, wheelDiameter: 0.63, paints: [-1], weight: 1 },
   { id: 'blue', sources: [traffic('bluecar'), kenney('sedan')], length: 4.4, width: 1.78, height: 1.45, wheelDiameter: 0.63, paints: [-1], weight: 1 },
   { id: 'suv', sources: [traffic('suv'), kenney('suv')], length: 4.8, width: 1.92, height: 1.78, wheelDiameter: 0.76, paints: CIVIL_PAINTS, weight: 3 },
-  { id: 'pickup', sources: [traffic('pickup'), kenney('truck')], length: 5.3, width: 1.9, height: 1.8, wheelDiameter: 0.78, paints: CIVIL_PAINTS, weight: 1 },
+  { id: 'pickup', sources: [traffic('pickup'), kenney('truck')], length: 5.3, width: 1.9, height: 1.8, wheelDiameter: 0.66, paints: CIVIL_PAINTS, weight: 1 },
   { id: 'van', sources: [traffic('van'), kenney('van')], length: 5.3, width: 2.0, height: 2.25, wheelDiameter: 0.7, paints: [0xf2f2f2, 0xd8d8d8], weight: 2 },
   { id: 'police', sources: [traffic('police'), kenney('police')], length: 4.8, width: 1.85, height: 1.55, wheelDiameter: 0.66, paints: [-1], weight: 1 },
+  // Simplified copies of the garage sedans (16–33k triangles, 512 px textures): realistic bodies in the flow.
+  { id: 'hq-camry', sources: [traffic('hq-camry'), kenney('sedan')], length: 4.88, width: 1.84, height: 1.45, wheelDiameter: 0.68, paints: CIVIL_PAINTS, weight: 3 },
+  { id: 'hq-prius', sources: [traffic('hq-prius'), kenney('hatchback-sports')], length: 4.48, width: 1.75, height: 1.49, wheelDiameter: 0.63, paints: CIVIL_PAINTS, weight: 3 },
+  { id: 'hq-e34', sources: [traffic('hq-e34'), kenney('sedan')], length: 4.72, width: 1.75, height: 1.38, wheelDiameter: 0.64, paints: CIVIL_PAINTS, weight: 2 },
+  { id: 'hq-chaser', sources: [traffic('hq-chaser'), kenney('sedan')], length: 4.76, width: 1.76, height: 1.38, wheelDiameter: 0.66, paints: CIVIL_PAINTS, weight: 2 },
 ];
 
 export const findPlayerCar = (id: string | null): VehicleSpec => PLAYER_CARS.find((c) => c.id === id) ?? PLAYER_CARS[0];

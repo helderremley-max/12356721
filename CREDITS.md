@@ -36,6 +36,7 @@ From [Poly Pizza](https://poly.pizza), 1–6k triangles each.
 | `van.glb`, `coupe.glb` | [Van](https://poly.pizza/m/aT_24cDaW1a), [Car](https://poly.pizza/m/75h3mi6uHuC) | Poly by Google | CC BY |
 | `redcar.glb` | [Red Car](https://poly.pizza/m/dVLJ5CjB0h) | J-Toastie | CC BY |
 | `bluecar.glb` | [Low Poly Blue Car](https://poly.pizza/m/548lb3MmT3) | m123 | CC0 |
+| `hq-camry.glb`, `hq-prius.glb`, `hq-e34.glb`, `hq-chaser.glb` | simplified copies (`scripts/optimize-glb.mjs`, 16–33k triangles, 512 px textures) of the garage `camry`, `prius`, `e34`, `chaser` models | same authors and licenses as the garage originals above | same as the originals |
 
 ## Sketchfab vehicles
 

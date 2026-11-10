@@ -281,11 +281,11 @@ svg {
 }
 
 .tb-reward {
-  padding: 0 calc(var(--u) * 3.6) 0 calc(var(--u) * 1.6);
+  padding: 0 calc(var(--u) * 3) 0 calc(var(--u) * 1.4);
   gap: calc(var(--u) * 0.8);
   border-radius: 999px 0 0 999px;
   clip-path: polygon(0 0, 100% 0, calc(100% - var(--u) * 3) 100%, 0 100%);
-  font-size: calc(var(--u) * 3);
+  font-size: calc(var(--u) * 2.6);
   font-weight: 600;
 }
 
@@ -294,7 +294,7 @@ svg {
 }
 
 .tb-money {
-  min-width: calc(var(--u) * 25);
+  min-width: calc(var(--u) * 21);
   padding: 0 calc(var(--u) * 0.6) 0 calc(var(--u) * 4.4);
   gap: calc(var(--u) * 1.6);
   border-radius: 0 999px 999px 0;
