@@ -53,7 +53,15 @@ export class CarView {
     this.rollCentre = model.body.position.y;
     const m = model.materials;
     this.factory = { paint: m.paint.color.clone(), rim: m.rim.color.clone(), tint: spec.tint };
+    // Texture-painted liveries never use the paint material, so they can't be resprayed.
+    model.root.traverse((o) => {
+      const mat = (o as THREE.Mesh).isMesh ? (o as THREE.Mesh).material : null;
+      if (mat && (Array.isArray(mat) ? mat.includes(m.paint) : mat === m.paint)) this.paintable = true;
+    });
   }
+
+  /** The body uses the paint material (tuning can respray it). */
+  paintable = false;
 
   static async create(loader: VehicleLoader, spec: VehicleSpec): Promise<CarView> {
     const model = await loader.load(spec.sources, spec);

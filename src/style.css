@@ -1540,9 +1540,22 @@ kbd {
   right: auto;
   left: 50%;
   translate: -50% 0;
-  bottom: calc(var(--u) * 5);
-  width: calc(var(--u) * 20);
-  height: calc(var(--u) * 20);
+  bottom: calc(var(--u) * 2.5);
+  width: calc(var(--u) * 16);
+  height: calc(var(--u) * 16);
+}
+
+.hud--touch .gauge__speed b {
+  font-size: calc(var(--u) * 5.4);
+}
+
+.hud--touch .gauge__gear {
+  bottom: calc(var(--u) * 1.2);
+  font-size: calc(var(--u) * 2.4);
+}
+
+.hud--touch .gauge__lamps {
+  display: none;
 }
 
 .hud--touch .hud__info {

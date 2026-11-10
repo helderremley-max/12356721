@@ -429,6 +429,10 @@ async function boot(): Promise<void> {
         menu.toast('Тюнинг доступен после покупки машины');
         return;
       }
+      if (patch?.paint !== undefined && !view.paintable) {
+        menu.toast('У этой машины заводская ливрея — покраска недоступна');
+        return;
+      }
       const t = patch === null ? {} : { ...(tunings[spec.id] ?? {}), ...patch };
       tunings[spec.id] = t;
       view.applyTuning(t);
