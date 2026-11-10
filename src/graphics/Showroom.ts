@@ -335,12 +335,14 @@ export class Showroom {
     const fit = (w: number, h: number) => Math.max(radius / (w * tanH), H / (h * 2 * tanV));
     const narrow = this.aspect < 1;
     switch (view) {
+      // Tuning: options panel on the right, so the car sits left of centre.
       case 'tuning':
-        return { azim: this.homeAzimuth + 0.24, elev: 0.1, dist: fit(narrow ? 0.95 : 0.7, 0.4), targetY: H * 0.36, shiftX: 0, shiftY: 0.1 };
+        return { azim: this.homeAzimuth + 0.24, elev: 0.1, dist: fit(narrow ? 0.95 : 0.62, 0.36), targetY: H * 0.36, shiftX: narrow ? 0 : 0.16, shiftY: 0.04 };
       case 'settings':
-        return { azim: this.homeAzimuth, elev: 0.2, dist: fit(narrow ? 0.7 : 0.36, 0.2), targetY: H * 0.4, shiftX: narrow ? 0 : 0.1, shiftY: 0 };
+        return { azim: this.homeAzimuth, elev: 0.2, dist: fit(narrow ? 0.7 : 0.36, 0.2), targetY: H * 0.4, shiftX: 0, shiftY: 0 };
+      // Lobby: car card bottom-left, garage strip along the bottom, so the car sits centred and a little high.
       default:
-        return { azim: this.homeAzimuth, elev: 0.18, dist: fit(narrow ? 0.85 : 0.5, 0.26), targetY: H * 0.4, shiftX: narrow ? 0 : 0.07, shiftY: 0 };
+        return { azim: this.homeAzimuth, elev: 0.16, dist: fit(narrow ? 0.85 : 0.48, 0.25), targetY: H * 0.4, shiftX: narrow ? 0 : -0.03, shiftY: 0.07 };
     }
   }
 

@@ -15,7 +15,7 @@ export interface CarStats {
 }
 
 export interface MenuCallbacks {
-  /** Preview a car (lobby arrows, shop). */
+  /** Preview a car (garage strip, shop). */
   onCar(index: number): void;
   onBuy(index: number): void;
   onTestDrive(index: number): void;
@@ -46,93 +46,113 @@ export interface RunResult {
 
 const fmt = (n: number) => Math.round(n).toLocaleString('ru-RU');
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** Performance class letter from engine power. */
+const carClass = (hp: number) => (hp < 140 ? 'D' : hp < 270 ? 'C' : hp < 370 ? 'B' : hp < 460 ? 'A' : 'S');
 
 type Opt = [value: string | number | boolean, label: string];
 type Row =
-  | { kind: 'options'; label: string; key: keyof Settings; options: Opt[]; icons?: boolean; hint?: string }
-  | { kind: 'stepper'; label: string; key: keyof Settings; options: Opt[]; hints: string[] }
-  | { kind: 'toggles'; label: string; keys: [keyof Settings, string][]; hint?: string }
-  | { kind: 'slider'; label: string; key: keyof Settings; min: number; max: number; step: number; unit: (v: number) => string }
-  | { kind: 'check'; label: string; key: keyof Settings; hint?: string }
+  | { kind: 'seg'; label: string; desc?: string; key: keyof Settings; options: Opt[]; icons?: boolean; hints?: string[] }
+  | { kind: 'switch'; label: string; desc?: string; key: keyof Settings }
+  | { kind: 'slider'; label: string; desc?: string; key: keyof Settings; min: number; max: number; step: number; lazy?: boolean; unit: (v: number) => string }
   | { kind: 'info'; label: string; html: string };
 
 const PAGES: { id: string; title: string; rows: Row[] }[] = [
   {
     id: 'game',
-    title: 'Игра',
+    title: 'Общие',
     rows: [
-      { kind: 'slider', label: 'Звук', key: 'volume', min: 0, max: 1, step: 0.05, unit: (v) => v.toFixed(2).replace('.', ',') },
-      { kind: 'options', label: 'Камера', key: 'camera', options: [['chase', 'Сзади'], ['far', 'Дальняя'], ['bumper', 'Капот']] },
-      { kind: 'slider', label: 'Инерция камеры', key: 'cameraInertia', min: 0, max: 1, step: 0.05, unit: (v) => `${Math.round(v * 100)}` },
-      { kind: 'check', label: 'Показывать FPS', key: 'showFps' },
+      { kind: 'slider', label: 'Громкость', key: 'volume', min: 0, max: 1, step: 0.05, unit: (v) => `${Math.round(v * 100)}%` },
+      { kind: 'seg', label: 'Вид камеры', key: 'camera', options: [['chase', 'Близко'], ['far', 'Далеко'], ['bumper', 'С капота']] },
+      {
+        kind: 'slider',
+        label: 'Плавность камеры',
+        desc: 'Насколько камера отстаёт при перестроениях',
+        key: 'cameraInertia',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        unit: (v) => `${Math.round(v * 100)}%`,
+      },
+      { kind: 'switch', label: 'Счётчик кадров', key: 'showFps' },
       {
         kind: 'info',
-        label: 'Управление',
-        html: '<kbd>W</kbd><kbd>↑</kbd> газ · <kbd>S</kbd><kbd>↓</kbd> тормоз · <kbd>A</kbd><kbd>D</kbd> руль · <kbd>E</kbd><kbd>Q</kbd> передачи · <kbd>C</kbd> камера · <kbd>Esc</kbd> пауза',
+        label: 'Клавиши',
+        html: '<kbd>W</kbd><kbd>S</kbd> газ и тормоз · <kbd>A</kbd><kbd>D</kbd> руль · <kbd>E</kbd><kbd>Q</kbd> передачи · <kbd>C</kbd> камера · <kbd>Esc</kbd> пауза',
       },
     ],
   },
   {
     id: 'car',
-    title: 'Машина',
+    title: 'Вождение',
     rows: [
-      { kind: 'options', label: 'Коробка передач', key: 'gearbox', options: [['auto', 'Авто'], ['manual', 'Ручная']], hint: 'Ручная: E — вверх, Q — вниз' },
+      { kind: 'seg', label: 'Трансмиссия', desc: 'В ручном режиме: E — выше, Q — ниже', key: 'gearbox', options: [['auto', 'Автомат'], ['manual', 'Механика']] },
       {
-        kind: 'stepper',
-        label: 'Стиль вождения',
+        kind: 'seg',
+        label: 'Режим управления',
         key: 'style',
-        options: [['arcade', 'Аркадное'], ['standard', 'Стандартное'], ['sim', 'Симулятор']],
+        options: [['arcade', 'Лёгкий'], ['standard', 'Обычный'], ['sim', 'Реализм']],
         hints: [
-          'Больше сцепления, машина сама выравнивается, ESP всегда включён',
-          'Машина выравнивается при отпущенном руле, перестроения под контролем',
-          'Чистая физика: без выравнивания и ограничений',
+          'Больше сцепления, машина сама держит полосу, стабилизация всегда включена',
+          'Машина выравнивается, когда отпускаешь руль',
+          'Чистая физика без подсказок — для опытных',
         ],
       },
       {
-        kind: 'options',
-        label: 'Привод',
+        kind: 'seg',
+        label: 'Ведущие колёса',
         key: 'drive',
         icons: true,
-        options: [['stock', 'Как у машины'], ['FWD', 'Передний'], ['RWD', 'Задний'], ['AWD', 'Полный']],
+        options: [['stock', 'Заводской'], ['FWD', 'Передние'], ['RWD', 'Задние'], ['AWD', 'Все']],
       },
-      { kind: 'toggles', label: 'Помощники', keys: [['abs', 'АБС'], ['esp', 'ЕСП'], ['tcs', 'ТКС']], hint: 'АБС — без блокировки колёс, ЕСП — без заноса, ТКС — без пробуксовки' },
+      { kind: 'switch', label: 'Антиблокировка (ABS)', desc: 'Колёса не блокируются при резком торможении', key: 'abs' },
+      { kind: 'switch', label: 'Стабилизация (ESP)', desc: 'Гасит занос и разворот', key: 'esp' },
+      { kind: 'switch', label: 'Антипробуксовка (TCS)', desc: 'Ограничивает газ при пробуксовке', key: 'tcs' },
     ],
   },
   {
     id: 'traffic',
-    title: 'Трафик',
+    title: 'Поток',
     rows: [
-      { kind: 'options', label: 'Плотность', key: 'trafficDensity', options: [['low', 'Низкая'], ['normal', 'Средняя'], ['high', 'Высокая'], ['extreme', 'Экстрим']] },
-      { kind: 'options', label: 'Скорость потока', key: 'trafficPace', options: [['slow', 'Медленно'], ['normal', 'Обычно'], ['fast', 'Быстро']] },
-      { kind: 'check', label: 'Перестроения ботов', key: 'trafficLaneChanges', hint: 'Боты меняют полосы с поворотником' },
-      { kind: 'check', label: 'Прозрачные боты', key: 'ghostTraffic', hint: 'Машина проезжает сквозь трафик, очки не начисляются' },
+      { kind: 'seg', label: 'Плотность машин', key: 'trafficDensity', options: [['low', 'Свободно'], ['normal', 'Обычно'], ['high', 'Пробки'], ['extreme', 'Хаос']] },
+      { kind: 'seg', label: 'Скорость потока', key: 'trafficPace', options: [['slow', 'Медленно'], ['normal', 'Обычно'], ['fast', 'Быстро']] },
+      { kind: 'switch', label: 'Перестроения', desc: 'Машины в потоке меняют полосы с поворотником', key: 'trafficLaneChanges' },
+      { kind: 'switch', label: 'Режим призраков', desc: 'Проезд сквозь машины, без очков и выплат', key: 'ghostTraffic' },
     ],
   },
   {
     id: 'graphics',
-    title: 'Графика',
+    title: 'Изображение',
     rows: [
-      { kind: 'options', label: 'Настройка графики', key: 'quality', options: [['low', 'Низкие'], ['medium', 'Средние'], ['high', 'Высокие'], ['ultra', 'Ультра']] },
-      { kind: 'options', label: 'Разрешение экрана', key: 'resolution', options: [[0.4, '40%'], [0.6, '60%'], [0.8, '80%'], [1, '100%']] },
-      { kind: 'options', label: 'ФПС', key: 'fpsLimit', options: [[30, '30'], [60, '60'], [0, 'Макс']] },
-      { kind: 'slider', label: 'Дальность прорисовки', key: 'drawDistance', min: 300, max: 1100, step: 50, unit: (v) => `${v} m` },
+      { kind: 'seg', label: 'Качество', key: 'quality', options: [['low', 'Эконом'], ['medium', 'Баланс'], ['high', 'Высокое'], ['ultra', 'Максимум']] },
+      { kind: 'slider', label: 'Чёткость', desc: 'Масштаб рендеринга', key: 'resolution', min: 0.4, max: 1, step: 0.1, lazy: true, unit: (v) => `${Math.round(v * 100)}%` },
+      { kind: 'seg', label: 'Ограничение кадров', key: 'fpsLimit', options: [[30, '30'], [60, '60'], [0, 'Нет']] },
+      { kind: 'slider', label: 'Обзор дороги', key: 'drawDistance', min: 300, max: 1100, step: 50, unit: (v) => `${v} м` },
     ],
   },
 ];
 
 const TUNE_CATS = [
-  { id: 'paint', label: 'Покраска', icon: ICONS.paint },
-  { id: 'rim', label: 'Диски', icon: ICONS.rim },
-  { id: 'tint', label: 'Тонировка', icon: ICONS.tint },
-  { id: 'drop', label: 'Подвеска', icon: ICONS.suspension },
+  { id: 'paint', label: 'Цвет', icon: ICONS.paint },
+  { id: 'rim', label: 'Диски', icon: ICONS.wheel },
+  { id: 'tint', label: 'Стёкла', icon: ICONS.window },
+  { id: 'drop', label: 'Посадка', icon: ICONS.height },
 ] as const;
 type TuneCat = (typeof TUNE_CATS)[number]['id'];
 
-const TITLES: Record<Screen, string> = { lobby: 'Лобби', maps: 'Трасса', settings: 'Настройки', tuning: 'Тюнинг', shop: 'Магазин' };
+const NAV: { id: Screen; label: string; icon: string }[] = [
+  { id: 'lobby', label: 'Гараж', icon: ICONS.garage },
+  { id: 'maps', label: 'Маршруты', icon: ICONS.route },
+  { id: 'tuning', label: 'Тюнинг', icon: ICONS.brush },
+  { id: 'shop', label: 'Автосалон', icon: ICONS.tag },
+  { id: 'settings', label: 'Опции', icon: ICONS.sliders },
+];
 
 /**
- * Menus over the showroom: top bar (player, shop / title / settings, cash),
- * lobby, track choice, settings, tuning, shop; plus pause and results cards.
+ * Menus over the showroom: header (brand, bonus, wallet, profile), a side
+ * navigation rail, the garage (car card, CTA, garage strip), and panels for
+ * routes, settings, tuning and the dealership; plus pause and results cards.
  * Pure DOM; the game drives it through the callbacks.
  */
 export class Menu {
@@ -164,153 +184,143 @@ export class Menu {
       settings: q('.scr--settings'),
       tuning: q('.scr--tuning'),
       shop: q('.scr--shop'),
-      pause: q('.card--pause'),
-      results: q('.card--results'),
+      pause: q('.dlg--pause'),
+      results: q('.dlg--results'),
     };
     this.root.addEventListener('click', (e) => this.onClickEvent(e));
-    this.root.addEventListener('input', (e) => {
-      const el = e.target as HTMLInputElement;
-      if (!el.dataset.range) return;
-      const key = el.dataset.range as keyof Settings;
-      this.cb.onSettings({ [key]: Number(el.value) } as Partial<Settings>);
-    });
+    // Sliders: live value while dragging; "lazy" ones (costly to apply) commit on release.
+    this.root.addEventListener('input', (e) => this.onRange(e.target as HTMLInputElement, false));
+    this.root.addEventListener('change', (e) => this.onRange(e.target as HTMLInputElement, true));
   }
 
   // ---------------------------------------------------------------- markup
 
   private template(): string {
-    const arrows = `<button class="nav-arrow nav-arrow--prev" data-car="-1" aria-label="Предыдущая машина">${ICONS.left}</button>
-      <button class="nav-arrow nav-arrow--next" data-car="1" aria-label="Следующая машина">${ICONS.right}</button>`;
     return `<div class="menu" id="menu">
-      <header class="topbar">
-        <div class="tb-player"><span class="tb-avatar">${ICONS.user}</span><b class="tb-name">Игрок</b></div>
-        <nav class="tb-nav">
-          <button class="tb-nav__shop" data-go="shop" aria-label="Магазин">${ICONS.cart}</button>
-          <div class="tb-nav__title">Лобби</div>
-          <button class="tb-nav__settings" data-go="settings" aria-label="Настройки">${ICONS.gear}</button>
-        </nav>
-        <div class="tb-wallet">
-          <button class="tb-reward" data-act="reward" title="Смотреть рекламу">${ICONS.video}<b class="tb-reward__sum"></b></button>
-          <div class="tb-money"><span class="tb-money__icon">${ICONS.cash}</span><b class="tb-money__sum">0</b>
-            <button class="tb-money__plus" data-act="reward" aria-label="Получить деньги">${ICONS.plus}</button></div>
+      <header class="hdr">
+        <div class="brand"><span class="brand__mark"></span><div class="brand__text"><b>Городской поток</b><small>шашки в трафике</small></div></div>
+        <div class="hdr__right">
+          <button class="chip chip--bonus" data-act="reward" title="Посмотреть видео и получить кредиты">${ICONS.play}<span>Бонус</span><b class="bonus-sum"></b></button>
+          <div class="chip chip--wallet" title="Кредиты">${ICONS.coin}<b class="wallet-sum">0</b></div>
+          <div class="chip chip--profile"><span class="avatar">${ICONS.user}</span><b class="profile-name">Игрок</b></div>
         </div>
       </header>
 
+      <nav class="rail">
+        ${NAV.map((n) => `<button class="rail__btn" data-go="${n.id}">${n.icon}<span>${n.label}</span></button>`).join('')}
+      </nav>
+
       <section class="scr scr--lobby">
-        ${arrows}
-        <aside class="spec-card">
-          <h3>Характеристики</h3>
-          <div class="spec-card__rows"></div>
-        </aside>
-        <div class="car-title">
-          <small class="car-title__idx"></small>
-          <h1 class="car-title__name"></h1>
-          <p class="car-title__tag"></p>
-          <p class="car-title__best"></p>
-          <p class="car-title__credit"></p>
+        <article class="car-card">
+          <div class="car-card__top"><span class="class-badge"></span><small class="car-card__idx"></small></div>
+          <h1 class="car-card__name"></h1>
+          <p class="car-card__tag"></p>
+          <div class="car-card__stats"></div>
+          <p class="car-card__best"></p>
+          <p class="car-card__credit"></p>
+        </article>
+        <div class="cta"></div>
+        <div class="strip">
+          <button class="strip__nav" data-car="-1" aria-label="Предыдущая машина">${ICONS.left}</button>
+          <div class="strip__track"></div>
+          <button class="strip__nav" data-car="1" aria-label="Следующая машина">${ICONS.right}</button>
         </div>
-        <div class="lobby-actions"></div>
       </section>
 
-      <section class="scr scr--maps" hidden>
-        <button class="back-tab" data-go="lobby">Назад</button>
-        <h2 class="scr__heading">Выбор трассы</h2>
-        <div class="map-cards">
+      <section class="scr scr--maps panel" hidden>
+        ${this.panelHead('Маршруты', 'Выберите время суток и характер потока')}
+        <div class="routes">
           ${this.maps
             .map(
-              (m, i) => `<button class="map-card" data-map="${i}" style="--art:${m.art}">
-                <span class="map-card__art"></span>
-                <b>${m.name}</b><small>${m.subtitle}</small>
-                <span class="map-card__go">Поехали ${ICONS.flag}</span>
+              (m, i) => `<button class="route" data-map="${i}" style="--art:${m.art}">
+                <span class="route__art"></span>
+                <span class="route__body"><b>${m.name}</b><small>${m.subtitle}</small></span>
+                <span class="route__go">Старт ${ICONS.arrow}</span>
               </button>`,
             )
             .join('')}
         </div>
       </section>
 
-      <section class="scr scr--settings scr--panel" hidden>
-        <button class="back-tab" data-go="lobby">Назад</button>
-        <div class="set-tabs">
-          ${PAGES.map((p) => `<button class="set-tab" data-tab="${p.id}">${p.title}</button>`).join('')}
-        </div>
-        <div class="set-pages">
-          ${PAGES.map((p) => `<div class="set-page" data-page="${p.id}">${p.rows.map((r) => this.rowHtml(r)).join('')}</div>`).join('')}
+      <section class="scr scr--settings panel panel--wide" hidden>
+        ${this.panelHead('Опции')}
+        <div class="tabs">${PAGES.map((p) => `<button class="tabs__btn" data-tab="${p.id}">${p.title}</button>`).join('')}</div>
+        <div class="pages">
+          ${PAGES.map((p) => `<div class="page" data-page="${p.id}">${p.rows.map((r) => this.rowHtml(r)).join('')}</div>`).join('')}
         </div>
       </section>
 
-      <section class="scr scr--tuning" hidden>
-        ${arrows}
-        <button class="back-btn" data-go="lobby">Назад</button>
-        <div class="tune-panel">
-          <div class="tune-cats">
-            ${TUNE_CATS.map((c) => `<button class="tune-cat" data-cat="${c.id}">${c.icon}<span>${c.label}</span></button>`).join('')}
-            <button class="tune-cat tune-cat--reset" data-act="factory">${ICONS.wrench}<span>Заводская</span></button>
-          </div>
-          <div class="tune-items"></div>
+      <section class="scr scr--tuning side" hidden>
+        ${this.panelHead('Тюнинг', 'Изменения бесплатны и сохраняются')}
+        <div class="tune-cats">
+          ${TUNE_CATS.map((c) => `<button class="tune-cat" data-cat="${c.id}">${c.icon}<span>${c.label}</span></button>`).join('')}
         </div>
+        <div class="tune-grid"></div>
+        <button class="link-btn" data-act="factory">${ICONS.reset}Вернуть заводское</button>
       </section>
 
-      <section class="scr scr--shop scr--panel" hidden>
-        <button class="back-tab" data-go="lobby">Назад</button>
-        <div class="shop-grid"></div>
+      <section class="scr scr--shop panel panel--wide" hidden>
+        ${this.panelHead('Автосалон', 'Нажмите на машину, чтобы посмотреть её в гараже')}
+        <div class="dealer"></div>
       </section>
 
-      <section class="card card--pause" hidden>
+      <section class="dlg dlg--pause" hidden>
         <h2>Пауза</h2>
-        <button class="btn btn--yellow" data-act="resume">Продолжить</button>
-        <button class="btn" data-act="restart">Заново</button>
-        <button class="btn" data-act="quit">Завершить заезд</button>
+        <button class="btn btn--primary" data-act="resume">Продолжить</button>
+        <button class="btn" data-act="restart">Начать заново</button>
+        <button class="btn btn--ghost" data-act="quit">Завершить заезд</button>
       </section>
-      <section class="card card--results" hidden>
+      <section class="dlg dlg--results" hidden>
         <h2></h2>
-        <div class="results__score"></div>
-        <dl class="results__grid"></dl>
-        <div class="results__cash"></div>
-        <button class="btn btn--yellow" data-act="restart">Ещё заезд</button>
-        <button class="btn" data-act="menu">В лобби</button>
+        <div class="res-score"></div>
+        <dl class="res-grid"></dl>
+        <div class="res-cash"></div>
+        <button class="btn btn--primary" data-act="restart">Ещё заезд</button>
+        <button class="btn btn--ghost" data-act="menu">В гараж</button>
       </section>
     </div>`;
   }
 
+  private panelHead(title: string, sub = ''): string {
+    return `<header class="panel__head"><div><h2>${title}</h2>${sub ? `<small>${sub}</small>` : ''}</div>
+      <button class="icon-btn" data-go="lobby" aria-label="Закрыть">${ICONS.close}</button></header>`;
+  }
+
   private rowHtml(r: Row): string {
-    const label = `<div class="row__label">${r.label}</div>`;
-    const hint = 'hint' in r && r.hint ? `<div class="row__hint">${r.hint}</div>` : '';
+    const desc = 'desc' in r && r.desc ? `<small>${r.desc}</small>` : '';
+    const hint = r.kind === 'seg' && r.hints ? `<small data-hint="${r.key}"></small>` : '';
+    const label = `<div class="row__text"><span>${r.label}</span>${desc}${hint}</div>`;
     let ctl = '';
     switch (r.kind) {
-      case 'options':
-        ctl = r.options
-          .map(
-            ([v, l]) =>
-              `<button class="opt${r.icons ? ' opt--icon' : ''}" data-set="${r.key}" data-val="${v}" title="${l}">${
-                r.icons ? driveIcon(v as 'FWD') + `<small>${l}</small>` : l
-              }</button>`,
-          )
-          .join('');
+      case 'seg':
+        ctl = `<div class="seg${r.icons ? ' seg--icons' : ''}">${r.options
+          .map(([v, l]) => `<button class="seg__btn" data-set="${r.key}" data-val="${v}">${r.icons ? driveIcon(v as 'FWD') : ''}<span>${l}</span></button>`)
+          .join('')}</div>`;
         break;
-      case 'stepper':
-        ctl = `<div class="stepper" data-stepper="${r.key}">
-          <button class="stepper__btn" data-step="-1" aria-label="Назад">${ICONS.left}</button>
-          <span class="stepper__val"></span>
-          <button class="stepper__btn" data-step="1" aria-label="Вперёд">${ICONS.right}</button></div>`;
-        break;
-      case 'toggles':
-        ctl = r.keys.map(([k, l]) => `<button class="opt" data-toggle="${k}">${l}</button>`).join('');
+      case 'switch':
+        ctl = `<button class="switch" data-toggle="${r.key}" role="switch" aria-label="${r.label}"><i></i></button>`;
         break;
       case 'slider':
-        ctl = `<input class="slider" type="range" data-range="${r.key}" min="${r.min}" max="${r.max}" step="${r.step}" /><output class="slider__val"></output>`;
-        break;
-      case 'check':
-        ctl = `<button class="check" data-toggle="${r.key}" aria-label="${r.label}">${ICONS.check}</button>`;
+        ctl = `<div class="range"><input type="range" data-range="${r.key}"${r.lazy ? ' data-lazy="1"' : ''} min="${r.min}" max="${r.max}" step="${r.step}" /><output></output></div>`;
         break;
       case 'info':
         ctl = `<div class="row__info">${r.html}</div>`;
         break;
     }
-    const stepHint = r.kind === 'stepper' ? `<div class="row__hint" data-hint="${r.key}"></div>` : '';
-    return `<div class="row row--${r.kind}">${label}<div class="row__ctl">${ctl}</div>${hint}${stepHint}</div>`;
+    return `<div class="row row--${r.kind}">${label}<div class="row__ctl">${ctl}</div></div>`;
   }
 
   // ---------------------------------------------------------------- events
+
+  private onRange(el: HTMLInputElement, commit: boolean): void {
+    if (!el.dataset.range) return;
+    const key = el.dataset.range as keyof Settings;
+    if (el.dataset.lazy && !commit) {
+      this.paintRange(el, Number(el.value));
+      return;
+    }
+    if (!commit || el.dataset.lazy) this.cb.onSettings({ [key]: Number(el.value) } as Partial<Settings>);
+  }
 
   private onClickEvent(e: Event): void {
     const el = (e.target as HTMLElement).closest('button');
@@ -319,35 +329,25 @@ export class Menu {
     const d = el.dataset;
     if (d.car) {
       const n = this.cars.length;
-      this.setCar((this.carIndex + Number(d.car) + n) % n);
-      this.cb.onCar(this.carIndex);
-    } else if (d.go) this.go(d.go as Screen);
+      this.pickCar((this.carIndex + Number(d.car) + n) % n);
+    } else if (d.pick) this.pickCar(Number(d.pick));
+    else if (d.go) this.go(d.go as Screen);
     else if (d.map) this.cb.onPlay(Number(d.map));
     else if (d.tab) this.selectPage(d.tab);
     else if (d.set) {
-      const key = d.set as keyof Settings;
-      const cur = this.settings[key];
+      const cur = this.settings[d.set as keyof Settings];
       const val = typeof cur === 'number' ? Number(d.val) : d.val;
-      this.cb.onSettings({ [key]: val } as Partial<Settings>);
+      this.cb.onSettings({ [d.set]: val } as Partial<Settings>);
     } else if (d.toggle) {
       const key = d.toggle as keyof Settings;
       this.cb.onSettings({ [key]: !this.settings[key] } as Partial<Settings>);
-    } else if (d.step) {
-      const box = el.closest<HTMLElement>('[data-stepper]')!;
-      const key = box.dataset.stepper as keyof Settings;
-      const row = PAGES.flatMap((p) => p.rows).find((r) => r.kind === 'stepper' && r.key === key) as Extract<Row, { kind: 'stepper' }>;
-      const i = row.options.findIndex(([v]) => v === this.settings[key]);
-      const n = row.options.length;
-      this.cb.onSettings({ [key]: row.options[(i + Number(d.step) + n) % n][0] } as Partial<Settings>);
     } else if (d.cat) {
       this.tuneCat = d.cat as TuneCat;
       this.renderTuning();
     } else if (d.tune) {
-      const value = Number(d.value);
-      this.cb.onTuning({ [d.tune]: value } as CarTuning);
+      this.cb.onTuning({ [d.tune]: Number(d.value) } as CarTuning);
     } else if (d.shop) {
-      this.setCar(Number(d.shop));
-      this.cb.onCar(this.carIndex);
+      this.pickCar(Number(d.shop));
       this.go('lobby');
     } else
       switch (d.act) {
@@ -381,16 +381,26 @@ export class Menu {
       }
   }
 
+  private pickCar(i: number): void {
+    if (i === this.carIndex) return;
+    this.setCar(i);
+    this.cb.onCar(i);
+  }
+
   // ---------------------------------------------------------------- state
 
   go(screen: Screen): void {
+    const car = this.cars[this.carIndex];
+    if ((screen === 'tuning' || screen === 'maps') && !this.owned.has(car.id) && !this.testDriveArmed) {
+      this.toast(screen === 'tuning' ? 'Тюнинг доступен после покупки машины' : 'Сначала купите машину или возьмите тест-драйв');
+      return;
+    }
     this.screen = screen;
     this.root.hidden = false;
     this.root.classList.remove('menu--dim');
     for (const [k, el] of Object.entries(this.screens)) el.hidden = k !== screen;
-    this.root.querySelector('.topbar')!.removeAttribute('hidden');
-    this.root.querySelector('.tb-nav__title')!.textContent = TITLES[screen];
     this.root.dataset.screen = screen;
+    for (const b of this.root.querySelectorAll<HTMLElement>('.rail__btn')) b.classList.toggle('rail__btn--on', b.dataset.go === screen);
     if (screen === 'settings') this.selectPage(this.settingsPage);
     if (screen === 'shop') this.renderShop();
     if (screen === 'tuning') this.renderTuning();
@@ -398,9 +408,12 @@ export class Menu {
     this.cb.onScreen(screen);
   }
 
-  /** Esc / back: sub-screens return to the lobby. Returns false on the lobby itself. */
+  /** Set by the game while a paid test drive is pending, so the route screen opens for a car we don't own. */
+  testDriveArmed = false;
+
+  /** Esc / close: panels return to the garage. Returns false on the garage itself. */
   back(): boolean {
-    if (this.root.hidden || this.screen === 'lobby' || !this.screens[this.screen] || this.screens[this.screen].hidden) return false;
+    if (this.root.hidden || this.screen === 'lobby' || this.screens[this.screen].hidden) return false;
     this.go('lobby');
     return true;
   }
@@ -410,18 +423,19 @@ export class Menu {
   }
 
   setPlayerName(name: string): void {
-    this.root.querySelector('.tb-name')!.textContent = name;
+    this.root.querySelector('.profile-name')!.textContent = name;
   }
 
   setMoney(money: number): void {
     this.money = money;
-    this.root.querySelector('.tb-money__sum')!.textContent = fmt(money);
-    if (this.screen === 'lobby') this.renderActions();
+    this.root.querySelector('.wallet-sum')!.textContent = fmt(money);
+    this.renderActions();
+    this.renderStrip();
     if (this.screen === 'shop' && !this.screens.shop.hidden) this.renderShop();
   }
 
   setRewardAmount(sum: number): void {
-    this.root.querySelector('.tb-reward__sum')!.textContent = `+${fmt(sum)}`;
+    this.root.querySelector('.bonus-sum')!.textContent = `+${fmt(sum)}`;
   }
 
   setGarage(owned: Set<string>, prices: Record<string, number>, stats: CarStats[]): void {
@@ -440,27 +454,31 @@ export class Menu {
   setSettings(s: Settings): void {
     this.settings = s;
     for (const btn of this.root.querySelectorAll<HTMLElement>('[data-set]')) {
-      btn.classList.toggle('opt--on', String(s[btn.dataset.set as keyof Settings]) === btn.dataset.val);
+      btn.classList.toggle('seg__btn--on', String(s[btn.dataset.set as keyof Settings]) === btn.dataset.val);
     }
     for (const btn of this.root.querySelectorAll<HTMLElement>('[data-toggle]')) {
-      btn.classList.toggle(btn.classList.contains('check') ? 'check--on' : 'opt--on', Boolean(s[btn.dataset.toggle as keyof Settings]));
+      const on = Boolean(s[btn.dataset.toggle as keyof Settings]);
+      btn.classList.toggle('switch--on', on);
+      btn.setAttribute('aria-checked', String(on));
     }
-    for (const box of this.root.querySelectorAll<HTMLElement>('[data-stepper]')) {
-      const key = box.dataset.stepper as keyof Settings;
-      const row = PAGES.flatMap((p) => p.rows).find((r) => r.kind === 'stepper' && r.key === key) as Extract<Row, { kind: 'stepper' }>;
-      const i = Math.max(0, row.options.findIndex(([v]) => v === s[key]));
-      box.querySelector('.stepper__val')!.textContent = row.options[i][1];
-      const hint = this.root.querySelector(`[data-hint="${key}"]`);
+    for (const row of PAGES.flatMap((p) => p.rows)) {
+      if (row.kind !== 'seg' || !row.hints) continue;
+      const i = Math.max(0, row.options.findIndex(([v]) => v === s[row.key]));
+      const hint = this.root.querySelector(`[data-hint="${row.key}"]`);
       if (hint) hint.textContent = row.hints[i];
     }
     for (const input of this.root.querySelectorAll<HTMLInputElement>('[data-range]')) {
-      const key = input.dataset.range as keyof Settings;
-      const row = PAGES.flatMap((p) => p.rows).find((r) => r.kind === 'slider' && r.key === key) as Extract<Row, { kind: 'slider' }>;
-      const v = Number(s[key]);
+      const v = Number(s[input.dataset.range as keyof Settings]);
       if (document.activeElement !== input) input.value = String(v);
-      input.style.setProperty('--p', `${((v - row.min) / (row.max - row.min)) * 100}%`);
-      (input.nextElementSibling as HTMLElement).textContent = row.unit(v);
+      this.paintRange(input, v);
     }
+  }
+
+  private paintRange(input: HTMLInputElement, v: number): void {
+    const key = input.dataset.range as keyof Settings;
+    const row = PAGES.flatMap((p) => p.rows).find((r) => r.kind === 'slider' && r.key === key) as Extract<Row, { kind: 'slider' }>;
+    input.style.setProperty('--p', `${((v - row.min) / (row.max - row.min)) * 100}%`);
+    (input.nextElementSibling as HTMLElement).textContent = row.unit(v);
   }
 
   setTuning(t: CarTuning): void {
@@ -469,16 +487,17 @@ export class Menu {
   }
 
   setBest(score: number, km: number): void {
-    this.root.querySelector('.car-title__best')!.textContent = score > 0 ? `Рекорд: ${fmt(score)} очков · ${km.toFixed(1)} км` : '';
+    this.root.querySelector('.car-card__best')!.textContent = score > 0 ? `Рекорд: ${fmt(score)} очков · ${km.toFixed(1)} км` : '';
   }
 
   /** Model attribution (CC BY requires it to be visible). */
   setCredit(text: string): void {
-    this.root.querySelector('.car-title__credit')!.textContent = text;
+    this.root.querySelector('.car-card__credit')!.textContent = text;
   }
 
-  /** Short message at the bottom of the screen. */
+  /** Short message near the bottom of the screen. */
   toast(text: string): void {
+    this.root.querySelector('.toast')?.remove();
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = text;
@@ -488,99 +507,121 @@ export class Menu {
 
   private selectPage(id: string): void {
     this.settingsPage = id;
-    for (const t of this.root.querySelectorAll<HTMLElement>('.set-tab')) t.classList.toggle('set-tab--on', t.dataset.tab === id);
-    for (const p of this.root.querySelectorAll<HTMLElement>('.set-page')) p.hidden = p.dataset.page !== id;
+    for (const t of this.root.querySelectorAll<HTMLElement>('.tabs__btn')) t.classList.toggle('tabs__btn--on', t.dataset.tab === id);
+    for (const p of this.root.querySelectorAll<HTMLElement>('.page')) p.hidden = p.dataset.page !== id;
   }
 
   private renderCar(): void {
     const c = this.cars[this.carIndex];
     const st = this.stats[this.carIndex];
     const q = (sel: string) => this.root.querySelector<HTMLElement>(sel)!;
-    q('.car-title__idx').textContent = `${this.carIndex + 1} / ${this.cars.length}`;
-    q('.car-title__name').textContent = c.name;
-    q('.car-title__tag').textContent = c.tagline;
+    q('.car-card__idx').textContent = `${this.carIndex + 1} из ${this.cars.length}`;
+    q('.car-card__name').textContent = c.name;
+    q('.car-card__tag').textContent = c.tagline;
     if (st) {
-      const rows: [string, string, string, number][] = [
-        [ICONS.speedo, 'Макс. скорость', `${fmt(st.topKmh)} км/ч`, st.topKmh / 320],
-        [ICONS.power, 'Мощность', `${fmt(st.hp)} л.с.`, st.hp / 520],
-        [ICONS.timer, 'Разгон 0–100', `${st.accel.toFixed(1).replace('.', ',')} с`, 1 - (st.accel - 3) / 14],
-        [ICONS.weight, 'Вес', `${fmt(st.massKg)} кг`, st.massKg / 2000],
-        [ICONS.drive, 'Привод', { RWD: 'Задний', FWD: 'Передний', AWD: 'Полный' }[c.handling.drivetrain], -1],
+      const cls = carClass(st.hp);
+      const badge = q('.class-badge');
+      badge.textContent = `Класс ${cls}`;
+      badge.dataset.cls = cls;
+      const rows: [string, string, number][] = [
+        ['Скорость', `${fmt(st.topKmh)} км/ч`, (st.topKmh - 120) / 200],
+        ['Разгон 0–100', `${st.accel.toFixed(1).replace('.', ',')} с`, 1 - (st.accel - 3) / 14],
+        ['Мощность', `${fmt(st.hp)} л.с.`, st.hp / 520],
+        ['Управление', `${c.handling.drivetrain} · ${fmt(st.massKg)} кг`, (c.handling.grip - 7.5) / 5.5],
       ];
-      q('.spec-card__rows').innerHTML = rows
-        .map(
-          ([icon, label, value, f]) => `<div class="spec">
-            <span class="spec__icon">${icon}</span>
-            <div class="spec__body"><div class="spec__line"><span>${label}:</span><b>${value}</b></div>
-            ${f >= 0 ? `<i class="spec__bar"><u style="width:${Math.round(Math.min(1, Math.max(0.06, f)) * 100)}%"></u></i>` : ''}</div>
-          </div>`,
-        )
+      q('.car-card__stats').innerHTML = rows
+        .map(([label, value, f]) => {
+          const on = Math.max(1, Math.round(clamp01(f) * 10));
+          return `<div class="stat"><div class="stat__line"><span>${label}</span><b>${value}</b></div>
+            <div class="stat__cells">${'<i class="on"></i>'.repeat(on)}${'<i></i>'.repeat(10 - on)}</div></div>`;
+        })
         .join('');
     }
     this.renderActions();
+    this.renderStrip();
   }
 
   private renderActions(): void {
     const c = this.cars[this.carIndex];
     const owned = this.owned.has(c.id);
     const price = this.prices[c.id] ?? 0;
-    const box = this.root.querySelector<HTMLElement>('.lobby-actions')!;
-    box.innerHTML = owned
-      ? `<button class="act act--tuning" data-go="tuning"><span>Тюнинг</span>${ICONS.wrench}</button>
-         <button class="act act--play" data-act="play"><span>Играть</span></button>`
-      : `<button class="act act--test" data-act="test"><span>Тест-драйв</span>${ICONS.video}</button>
-         <button class="act act--buy${this.money >= price ? '' : ' act--poor'}" data-act="buy">
-           <span>Купить</span><b>${ICONS.cash}${fmt(price)}</b></button>`;
-    this.screens.lobby.classList.toggle('scr--locked', !owned);
+    this.root.querySelector<HTMLElement>('.cta')!.innerHTML = owned
+      ? `<button class="btn btn--ghost" data-go="tuning">${ICONS.brush}Тюнинг</button>
+         <button class="btn btn--primary btn--big" data-act="play">В путь ${ICONS.arrow}</button>`
+      : `<button class="btn btn--ghost" data-act="test">${ICONS.play}Тест-драйв</button>
+         <button class="btn btn--primary btn--big${this.money >= price ? '' : ' btn--short'}" data-act="buy">
+           Купить<b>${ICONS.coin}${fmt(price)}</b></button>`;
   }
 
-  private renderShop(): void {
-    this.root.querySelector('.shop-grid')!.innerHTML = this.cars
+  private renderStrip(): void {
+    const track = this.root.querySelector<HTMLElement>('.strip__track');
+    if (!track) return;
+    track.innerHTML = this.cars
       .map((c, i) => {
         const st = this.stats[i];
         const owned = this.owned.has(c.id);
         const price = this.prices[c.id] ?? 0;
-        const status = i === this.carIndex && owned ? 'Выбрана' : owned ? 'Куплена' : `${ICONS.cash}${fmt(price)}`;
-        return `<button class="shop-card${owned ? ' shop-card--owned' : ''}${i === this.carIndex ? ' shop-card--on' : ''}" data-shop="${i}">
-          <small>${i + 1}</small><b>${c.name}</b>
-          <span class="shop-card__specs">${st ? `${fmt(st.hp)} л.с. · ${fmt(st.topKmh)} км/ч · ${c.handling.drivetrain}` : ''}</span>
-          <em class="shop-card__price${!owned && this.money < price ? ' shop-card__price--poor' : ''}">${owned ? '' : ICONS.lock}${status}</em>
+        return `<button class="tile${i === this.carIndex ? ' tile--on' : ''}${owned ? '' : ' tile--locked'}" data-pick="${i}">
+          <span class="tile__cls" data-cls="${st ? carClass(st.hp) : ''}">${st ? carClass(st.hp) : ''}</span>
+          <b>${c.name}</b>
+          <small>${owned ? 'В гараже' : `${ICONS.lock}${fmt(price)}`}</small>
+        </button>`;
+      })
+      .join('');
+    const on = track.children[this.carIndex] as HTMLElement | undefined;
+    if (on) track.scrollTo({ left: on.offsetLeft - (track.clientWidth - on.offsetWidth) / 2, behavior: 'smooth' });
+  }
+
+  private renderShop(): void {
+    this.root.querySelector('.dealer')!.innerHTML = this.cars
+      .map((c, i) => {
+        const st = this.stats[i];
+        const owned = this.owned.has(c.id);
+        const price = this.prices[c.id] ?? 0;
+        const status = owned ? (i === this.carIndex ? 'Выбрана' : 'В гараже') : `${ICONS.coin}${fmt(price)}`;
+        return `<button class="deal${owned ? ' deal--owned' : ''}${i === this.carIndex ? ' deal--on' : ''}" data-shop="${i}">
+          <span class="deal__cls" data-cls="${st ? carClass(st.hp) : ''}">${st ? carClass(st.hp) : ''}</span>
+          <b>${c.name}</b>
+          <small>${st ? `${fmt(st.hp)} л.с. · ${fmt(st.topKmh)} км/ч · ${c.handling.drivetrain}` : ''}</small>
+          <em class="${!owned && this.money < price ? 'short' : ''}">${status}</em>
         </button>`;
       })
       .join('');
   }
 
   private renderTuning(): void {
-    for (const b of this.root.querySelectorAll<HTMLElement>('.tune-cat[data-cat]')) b.classList.toggle('tune-cat--on', b.dataset.cat === this.tuneCat);
+    for (const b of this.root.querySelectorAll<HTMLElement>('.tune-cat')) b.classList.toggle('tune-cat--on', b.dataset.cat === this.tuneCat);
     const t = this.tuning;
+    const swatch = (key: string, value: number, label: string, on: boolean) =>
+      `<button class="swatch${on ? ' swatch--on' : ''}" data-tune="${key}" data-value="${value}" title="${label}">
+        <span style="--c:${hex(value)}"></span><small>${label}</small></button>`;
+    const option = (key: string, value: number, label: string, on: boolean) =>
+      `<button class="opt${on ? ' opt--on' : ''}" data-tune="${key}" data-value="${value}">${label}${on ? ICONS.check : ''}</button>`;
     let html = '';
-    const tile = (key: string, value: number, label: string, on: boolean, swatch?: number) =>
-      `<button class="tune-item${on ? ' tune-item--on' : ''}" data-tune="${key}" data-value="${value}">
-        ${swatch !== undefined ? `<span class="tune-item__swatch" style="--c:${hex(swatch)}"></span>` : ''}
-        <span class="tune-item__label">${label}</span>${on ? `<span class="tune-item__check">${ICONS.check}</span>` : ''}</button>`;
-    if (this.tuneCat === 'paint') html = PAINTS.map((p) => tile('paint', p.color, p.name, t.paint === p.color, p.color)).join('');
-    else if (this.tuneCat === 'rim') html = RIMS.map((p) => tile('rim', p.color, p.name, t.rim === p.color, p.color)).join('');
-    else if (this.tuneCat === 'tint') html = TINTS.map((p) => tile('tint', p.value, p.name, (t.tint ?? -1) === p.value)).join('');
-    else html = DROPS.map((p) => tile('drop', p.value, p.name, (t.drop ?? 0) === p.value)).join('');
-    this.root.querySelector('.tune-items')!.innerHTML = html;
+    if (this.tuneCat === 'paint') html = PAINTS.map((p) => swatch('paint', p.color, p.name, t.paint === p.color)).join('');
+    else if (this.tuneCat === 'rim') html = RIMS.map((p) => swatch('rim', p.color, p.name, t.rim === p.color)).join('');
+    else if (this.tuneCat === 'tint') html = TINTS.map((p) => option('tint', p.value, p.name, (t.tint ?? -1) === p.value)).join('');
+    else html = DROPS.map((p) => option('drop', p.value, p.name, (t.drop ?? 0) === p.value)).join('');
+    const grid = this.root.querySelector<HTMLElement>('.tune-grid')!;
+    grid.classList.toggle('tune-grid--list', this.tuneCat === 'tint' || this.tuneCat === 'drop');
+    grid.innerHTML = html;
   }
 
   // ---------------------------------------------------------------- overlays
 
-  private showCard(which: 'pause' | 'results' | null): void {
+  private showDialog(which: 'pause' | 'results' | null): void {
     this.root.hidden = which === null;
     for (const [k, el] of Object.entries(this.screens)) el.hidden = k !== which;
-    this.root.querySelector('.topbar')!.toggleAttribute('hidden', true);
     this.root.classList.toggle('menu--dim', which !== null);
     this.root.dataset.screen = which ?? '';
   }
 
   showPause(): void {
-    this.showCard('pause');
+    this.showDialog('pause');
   }
 
   hide(): void {
-    this.showCard(null);
+    this.showDialog(null);
   }
 
   get open(): boolean {
@@ -589,16 +630,16 @@ export class Menu {
 
   showResults(r: RunResult): void {
     const el = this.screens.results;
-    el.querySelector('h2')!.textContent = r.crashed ? 'Авария!' : 'Заезд завершён';
-    el.querySelector('.results__score')!.innerHTML = `${fmt(r.score)}<small>${r.newBest ? 'новый рекорд!' : 'очков'}</small>`;
-    el.querySelector('.results__grid')!.innerHTML = `
+    el.querySelector('h2')!.textContent = r.crashed ? 'Авария' : 'Заезд завершён';
+    el.querySelector('.res-score')!.innerHTML = `${fmt(r.score)}<small>${r.newBest ? 'новый рекорд!' : 'очков'}</small>`;
+    el.querySelector('.res-grid')!.innerHTML = `
       <dt>Дистанция</dt><dd>${r.km.toFixed(2)} км</dd>
-      <dt>Опасных сближений</dt><dd>${r.nearMisses}</dd>
+      <dt>Опасных обгонов</dt><dd>${r.nearMisses}</dd>
       <dt>Лучшее комбо</dt><dd>×${r.maxCombo.toFixed(2)}</dd>
       <dt>Рекорд</dt><dd>${fmt(r.best)}</dd>`;
-    el.querySelector('.results__cash')!.innerHTML = r.testDrive
-      ? 'Тест-драйв: деньги не начисляются'
-      : `${ICONS.cash}<b>+${fmt(r.earned)}</b>`;
-    this.showCard('results');
+    el.querySelector('.res-cash')!.innerHTML = r.testDrive
+      ? 'Тест-драйв: кредиты не начисляются'
+      : `${ICONS.coin}<b>+${fmt(r.earned)}</b>`;
+    this.showDialog('results');
   }
 }
