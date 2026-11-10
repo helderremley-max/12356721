@@ -10,6 +10,8 @@ export class RoadStreamer {
   private builder: RoadChunkBuilder;
   private chunks = new Map<number, RoadChunk>();
   private readonly maxBuildsPerFrame = 2;
+  /** Streamed road ahead of the player, m (settings → draw distance). */
+  viewAhead = VIEW_AHEAD;
 
   constructor(
     private readonly root: THREE.Object3D,
@@ -31,7 +33,7 @@ export class RoadStreamer {
     this.layout.prune(s - VIEW_BEHIND - 200);
 
     const first = Math.floor((s - VIEW_BEHIND) / CHUNK_LENGTH);
-    const last = Math.floor((s + VIEW_AHEAD) / CHUNK_LENGTH);
+    const last = Math.floor((s + this.viewAhead) / CHUNK_LENGTH);
 
     for (const [i, chunk] of this.chunks) {
       if (i < first || i > last) {

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { VehicleSpec } from '../assets/vehicles';
 import type { VehicleLoader, VehicleModel } from '../assets/VehicleLoader';
+import type { CarTuning } from '../gameplay/economy';
 import type { PlayerCar } from './PlayerCar';
 
 /** Damped spring for one body axis (roll or pitch). */
@@ -18,17 +19,27 @@ class BodySpring {
       this.angle += this.vel * h;
     }
   }
+
+  reset(): void {
+    this.angle = 0;
+    this.vel = 0;
+  }
 }
 
 /**
  * Visual side of the player car: places the loaded model, swings the sprung
- * body on roll/pitch springs, spins and steers the wheels, drives the lights.
+ * body on roll/pitch springs, spins and steers the wheels, drives the lights,
+ * and applies the garage tuning (paint, rims, tint, ride height).
  */
 export class CarView {
   private roll = new BodySpring();
   private pitch = new BodySpring();
   private beam: THREE.SpotLight;
   private time = 0;
+  private readonly rollCentre: number;
+  private readonly factory: { paint: THREE.Color; rim: THREE.Color; tint: number };
+  /** Ride-height drop from tuning, m (negative = lower). */
+  private drop = 0;
 
   private constructor(
     readonly model: VehicleModel,
@@ -39,6 +50,9 @@ export class CarView {
     this.beam.position.copy(model.headlightPos);
     this.beam.target.position.set(0, -0.6, model.headlightPos.z - 40);
     model.root.add(this.beam, this.beam.target);
+    this.rollCentre = model.body.position.y;
+    const m = model.materials;
+    this.factory = { paint: m.paint.color.clone(), rim: m.rim.color.clone(), tint: spec.tint };
   }
 
   static async create(loader: VehicleLoader, spec: VehicleSpec): Promise<CarView> {
@@ -49,6 +63,27 @@ export class CarView {
   setNight(on: boolean): void {
     this.model.materials.lights.setNight(on);
     this.beam.intensity = on ? 240 : 0;
+  }
+
+  applyTuning(t: CarTuning): void {
+    const m = this.model.materials;
+    m.setPaint(t.paint ?? this.factory.paint);
+    m.rim.color.set(t.rim ?? this.factory.rim);
+    m.setTint(t.tint ?? this.factory.tint);
+    this.drop = t.drop ?? 0;
+  }
+
+  /** Parked pose for the showroom: level body, straight wheels, brakes off. */
+  park(): void {
+    const { root, body, wheels } = this.model;
+    root.position.set(0, 0, 0);
+    root.rotation.set(0, 0, 0);
+    this.roll.reset();
+    this.pitch.reset();
+    body.rotation.set(0, 0, 0);
+    body.position.y = this.rollCentre + this.drop;
+    for (const w of wheels) if (w.front) w.steer.rotation.y = 0;
+    this.model.materials.lights.setBrake(false);
   }
 
   update(dt: number, car: PlayerCar, origin: number): void {
@@ -64,7 +99,7 @@ export class CarView {
     const v01 = Math.min(1, car.speed / 70);
     const ripple = Math.sin(this.time * 37) * Math.sin(this.time * 13.1) * 0.0035 * v01;
     body.rotation.set(this.pitch.angle, 0, this.roll.angle);
-    body.position.y = 0.45 + ripple - Math.abs(this.roll.angle) * 0.15;
+    body.position.y = this.rollCentre + this.drop + ripple - Math.abs(this.roll.angle) * 0.15;
 
     const spin = (car.speed / this.model.wheelRadius) * dt;
     for (const w of wheels) {
