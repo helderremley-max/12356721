@@ -12,7 +12,7 @@ export interface CameraTarget {
   height: number;
 }
 
-export type CameraMode = 'chase' | 'bumper';
+export type CameraMode = 'chase' | 'far' | 'bumper';
 
 /** Speed used to normalise speed-driven effects (FOV, shake). */
 const REF_SPEED = 300 / 3.6;
@@ -49,8 +49,11 @@ export class CameraRig {
   }
 
   toggleMode(): void {
-    this.mode = this.mode === 'chase' ? 'bumper' : 'chase';
+    this.mode = this.mode === 'chase' ? 'far' : this.mode === 'far' ? 'bumper' : 'chase';
   }
+
+  /** 0 = rigid follow, 1 = loose, cinematic lag. */
+  inertia = 0.5;
 
   /** Slow orbit around the car behind the main menu. */
   showcase = false;
@@ -76,8 +79,8 @@ export class CameraRig {
     }
 
     // Lag behind lateral moves and heading changes: sells the weight of a switch-back.
-    this.lagX += (t.x - this.lagX) * damp(6.5, dt);
-    this.lagPsi += (t.psi - this.lagPsi) * damp(4, dt);
+    this.lagX += (t.x - this.lagX) * damp(THREE.MathUtils.lerp(13, 3.5, this.inertia), dt);
+    this.lagPsi += (t.psi - this.lagPsi) * damp(THREE.MathUtils.lerp(9, 2.2, this.inertia), dt);
     this.pull += (THREE.MathUtils.clamp(t.longAccel, -10, 8) * 0.055 - this.pull) * damp(3, dt);
     this.shake *= Math.exp(-5 * dt);
 
@@ -88,11 +91,12 @@ export class CameraRig {
     const jx = Math.sin(this.time * 31) * jitter;
     const jy = Math.sin(this.time * 23.7) * jitter * 0.6;
 
-    if (this.mode === 'chase') {
-      const back = 5.6 + t.length * 0.25 + this.pull;
-      const up = 1.45 + t.height * 0.32;
+    if (this.mode !== 'bumper') {
+      const far = this.mode === 'far';
+      const back = (far ? 8.4 : 5.6) + t.length * 0.25 + this.pull;
+      const up = (far ? 2.35 : 1.45) + t.height * 0.32;
       this.pos.set(this.lagX - sin * back + jx, up + jy, z + cos * back);
-      this.look.set(t.x + sin * 7, 0.95, z - cos * 7);
+      this.look.set(t.x + sin * 7, far ? 1.1 : 0.95, z - cos * 7);
     } else {
       const nose = t.length / 2 + 0.1;
       this.pos.set(t.x + Math.sin(t.psi) * nose + jx * 0.5, 0.62 + jy * 0.5, z - Math.cos(t.psi) * nose);
@@ -121,7 +125,7 @@ export class CameraRig {
     this.roll += (-t.latAccel * 0.0035 - this.roll) * damp(5, dt);
     this.camera.rotateZ(this.roll * e);
 
-    const base = this.mode === 'chase' ? 58 : 66;
+    const base = this.mode === 'bumper' ? 66 : 58;
     const targetFov = THREE.MathUtils.lerp(48, base + 22 * Math.pow(speed01, 1.6), e);
     this.fov += (targetFov - this.fov) * damp(3, dt);
     this.camera.fov = this.fov;
