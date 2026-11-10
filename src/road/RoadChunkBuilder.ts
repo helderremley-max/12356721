@@ -10,6 +10,7 @@ import {
   UV_PERIOD,
 } from '../config';
 import type { Materials } from '../graphics/Materials';
+import { CityChunkBuilder, OPP_BARRIER, OPP_OUTER } from '../graphics/city/CityChunk';
 import type { RoadLayout } from './RoadLayout';
 
 /**
@@ -133,8 +134,15 @@ class PropGeometry {
 
 let props: PropGeometry | null = null;
 
+/** Opposite carriageway: three lanes between its inner barrier and its outer shoulder. */
+const OPP_LANES = 3;
+const OPP_INNER_SHOULDER = 0.9;
+const OPP_INNER = OPP_BARRIER - 0.6 - OPP_INNER_SHOULDER;
+const OPP_LANE_EDGE = OPP_OUTER + SHOULDER_WIDTH;
+
 export class RoadChunkBuilder {
   private props: PropGeometry;
+  private city: CityChunkBuilder;
 
   constructor(
     private readonly layout: RoadLayout,
@@ -142,6 +150,7 @@ export class RoadChunkBuilder {
   ) {
     props ??= new PropGeometry();
     this.props = props;
+    this.city = new CityChunkBuilder(layout, mats.city);
   }
 
   build(index: number, s0: number, s1: number): RoadChunk {
@@ -159,12 +168,19 @@ export class RoadChunkBuilder {
     };
 
     add(this.surface(s0, s1), this.mats.road);
+    add(this.oppositeSurface(s0, s1), this.mats.road);
     add(this.markings(s0, s1), this.mats.marking);
     const arrows = this.arrows(s0, s1);
     if (arrows) add(arrows, this.mats.arrow);
-    add(this.guardrail(s0, s1), this.mats.guardrail, { cast: true });
+    add(this.guardrail(s0, s1, 1), this.mats.guardrail, { cast: true });
+    add(this.guardrail(s0, s1, -1), this.mats.guardrail, { cast: true });
     add(this.jersey(s0, s1), this.mats.concrete, { cast: true });
-    group.add(this.guardPosts(s0, s1));
+    add(this.jersey(s0, s1, OPP_BARRIER), this.mats.concrete, { cast: true });
+    group.add(this.guardPosts(s0, s1, 1));
+    group.add(this.guardPosts(s0, s1, -1));
+    const city = this.city.build(index, s0, s1);
+    for (const mesh of city.meshes) group.add(mesh);
+    owned.push(...city.geometries);
     const lamps = this.streetLights(s0, s1, group);
     this.signs(s0, s1, group);
 
@@ -220,6 +236,34 @@ export class RoadChunkBuilder {
     return b.build();
   }
 
+  /** The far carriageway (traffic runs the other way) beyond the median. */
+  private oppositeSurface(s0: number, s1: number): THREE.BufferGeometry {
+    const b = new GeoBuilder();
+    const roadPos = b.attr('roadPos', 2);
+    const shoulder = b.attr('shoulder', 1);
+    const rows = this.rows(s0, s1);
+    const uvBase = s0 % UV_PERIOD;
+    const noiseBase = s0 % NOISE_PERIOD;
+    const cols: [number, number][] = [
+      [OPP_OUTER, 1],
+      [OPP_LANE_EDGE, 0],
+      [OPP_INNER, 0],
+      [OPP_BARRIER - 0.3, 1],
+    ];
+    for (const s of rows) {
+      const ds = s - s0;
+      for (const [x, sh] of cols) {
+        b.positions.push(x, 0, -ds);
+        b.normals.push(0, 1, 0);
+        b.uvs.push((x - OPP_INNER) / LANE_WIDTH + OPP_LANES, (uvBase + ds) / LANE_WIDTH);
+        roadPos.push(x, noiseBase + ds);
+        shoulder.push(sh);
+      }
+    }
+    b.gridIndices(0, rows.length, 4);
+    return b.build();
+  }
+
   private ribbon(b: GeoBuilder, s0: number, xAt: (s: number) => number, sA: number, sB: number, width: number, step: number): void {
     const n = Math.max(1, Math.ceil((sB - sA) / step));
     const base = b.count;
@@ -258,6 +302,11 @@ export class RoadChunkBuilder {
     for (const x of [-LANE_WIDTH / 2, LANE_WIDTH / 2]) this.dashes(b, s0, s1, DASH, () => x);
     this.ribbon(b, s0, (s) => L.leftEdge(s) + EDGE_WIDTH / 2, s0, s1, EDGE_WIDTH, CHUNK_STEP);
     this.ribbon(b, s0, (s) => L.rightEdge(s) - EDGE_WIDTH / 2, s0, s1, EDGE_WIDTH, CHUNK_STEP);
+
+    // opposite carriageway: edge lines and lane dashes
+    this.ribbon(b, s0, () => OPP_INNER + EDGE_WIDTH / 2, s0, s1, EDGE_WIDTH, CHUNK_STEP);
+    this.ribbon(b, s0, () => OPP_LANE_EDGE - EDGE_WIDTH / 2, s0, s1, EDGE_WIDTH, CHUNK_STEP);
+    for (let i = 1; i < OPP_LANES; i++) this.dashes(b, s0, s1, DASH, () => OPP_LANE_EDGE + LANE_WIDTH * i);
 
     // Broad dashed separator between main lanes and an open pocket.
     for (const z of L.zonesIn(s0, s1)) {
@@ -325,7 +374,7 @@ export class RoadChunkBuilder {
     return b.build(true);
   }
 
-  private guardrail(s0: number, s1: number): THREE.BufferGeometry {
+  private guardrail(s0: number, s1: number, side: 1 | -1): THREE.BufferGeometry {
     const L = this.layout;
     const profile: [number, number][] = [
       [0, 0.44],
@@ -336,10 +385,11 @@ export class RoadChunkBuilder {
       [-0.08, 0.72],
       [0, 0.78],
     ];
-    return this.sweep(s0, s1, (s) => L.rightEdge(s) + SHOULDER_WIDTH + 0.45, 1, profile, true);
+    const path = side === 1 ? (s: number) => L.rightEdge(s) + SHOULDER_WIDTH + 0.45 : () => OPP_OUTER - 0.45;
+    return this.sweep(s0, s1, path, side, profile, true);
   }
 
-  private guardPosts(s0: number, s1: number): THREE.InstancedMesh {
+  private guardPosts(s0: number, s1: number, side: 1 | -1): THREE.InstancedMesh {
     const spacing = 4;
     const first = Math.ceil(s0 / spacing) * spacing;
     const count = Math.max(0, Math.ceil((s1 - first) / spacing));
@@ -347,7 +397,8 @@ export class RoadChunkBuilder {
     const m = new THREE.Matrix4();
     for (let i = 0; i < count; i++) {
       const s = first + i * spacing;
-      m.makeTranslation(this.layout.rightEdge(s) + SHOULDER_WIDTH + 0.55, 0, -(s - s0));
+      const x = side === 1 ? this.layout.rightEdge(s) + SHOULDER_WIDTH + 0.55 : OPP_OUTER - 0.55;
+      m.makeTranslation(x, 0, -(s - s0));
       mesh.setMatrixAt(i, m);
     }
     mesh.castShadow = true;
@@ -357,7 +408,7 @@ export class RoadChunkBuilder {
   }
 
   /** New-Jersey concrete median barrier (75 mm lip, 55° then 84° faces). */
-  private jersey(s0: number, s1: number): THREE.BufferGeometry {
+  private jersey(s0: number, s1: number, fixedX?: number): THREE.BufferGeometry {
     const L = this.layout;
     const profile: [number, number][] = [
       [0, 0],
@@ -369,7 +420,8 @@ export class RoadChunkBuilder {
       [0.606, 0.075],
       [0.606, 0],
     ];
-    return this.sweep(s0, s1, (s) => L.leftEdge(s) - MEDIAN_SHOULDER_WIDTH - 0.05, -1, profile, false);
+    const path = fixedX === undefined ? (s: number) => L.leftEdge(s) - MEDIAN_SHOULDER_WIDTH - 0.05 : () => fixedX;
+    return this.sweep(s0, s1, path, -1, profile, false);
   }
 
   private streetLights(s0: number, s1: number, group: THREE.Group): THREE.Vector3[] {
