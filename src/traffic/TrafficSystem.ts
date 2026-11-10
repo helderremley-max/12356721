@@ -65,6 +65,10 @@ export interface TrafficOptions {
   /** Cars per km per main lane at the densest. */
   density: number;
   seed?: number;
+  /** Cruise-speed multiplier for the whole flow. */
+  pace?: number;
+  /** Voluntary lane changes (pocket merges always happen). */
+  laneChanges?: boolean;
 }
 
 /** Any window this long (m) must leave at least one lane open. */
@@ -183,7 +187,7 @@ export class TrafficSystem {
       const count = this.cars.filter((c) => c.lane === lane && c.s > p.s - DESPAWN_BEHIND).length;
       if (count < target) this.trySpawn(sAhead, p, lane);
       // Traffic catching up from behind when the player is slower than the flow.
-      const flow = LANE_FLOW[lane][0] * KMH;
+      const flow = LANE_FLOW[lane][0] * KMH * (this.opts.pace ?? 1);
       if (!pocket && p.speed < flow - 2 && this.cars.length < this.opts.maxCars) {
         const behind = this.cars.some((c) => c.lane === lane && c.s < p.s && c.s > p.s - DESPAWN_BEHIND);
         if (!behind) this.trySpawn(p.s - this.rng.range(170, 220), p, lane);
@@ -198,7 +202,7 @@ export class TrafficSystem {
     if ((lane === -1 || lane === 3) && (!zone || zone.fullEnd - s < 260)) return false;
     const type = this.pickType(lane);
     const [lo, hi] = LANE_FLOW[lane];
-    const v0 = (type.heavy ? this.rng.range(60, 76) : this.rng.range(lo, hi)) * KMH;
+    const v0 = (type.heavy ? this.rng.range(60, 76) : this.rng.range(lo, hi)) * KMH * (this.opts.pace ?? 1);
     // Same-lane spacing.
     const minGap = Math.max(26, v0 * 1.6);
     for (const c of this.cars) {
@@ -488,6 +492,7 @@ export class TrafficSystem {
     }
     if (car.phase !== 'none' || this.time < car.nextDecision) return;
     car.nextDecision = this.time + this.rng.range(1.5, 4);
+    if (this.opts.laneChanges === false) return;
 
     const lead = this.leaderIn(car, car.lane, p);
     const blocked = lead.gap < 70 && lead.v < car.v0 - 2.5;
@@ -556,7 +561,7 @@ export class TrafficSystem {
       // Match the neighbour lane before merging so a gap can open beside us.
       const u = this.pocketUrgency(car);
       if (u > 0) {
-        const flow = LANE_FLOW[car.lane === 3 ? 2 : 0][0] * KMH;
+        const flow = LANE_FLOW[car.lane === 3 ? 2 : 0][0] * KMH * (this.opts.pace ?? 1);
         v0 = Math.min(v0, flow + (v0 - flow) * (1 - u));
       }
     }

@@ -117,8 +117,8 @@ async function boot(): Promise<void> {
   let view = await viewReady;
   scene.add(view.model.root);
   const showCar = async () => {
-    const credit = await creditFor(view.model.source);
-    hud.setCar(spec.name, spec.tagline, credit ? `Модель: «${credit.title}» — ${credit.author}, ${credit.license}` : '');
+    await creditFor(view.model.source);
+    hud.setCar(spec.name, spec.tagline);
   };
   const car = new PlayerCar(road.layout, spec.handling, view.model.wheelbase, view.model.width, view.model.length);
   car.speed = MENU_CRUISE;
@@ -229,7 +229,7 @@ async function boot(): Promise<void> {
   await step('Готово', 1);
   hud.hideLoader();
   platform.loadingReady();
-  hud.setPlatform(platform.kind === 'yandex' ? 'Яндекс Игры' : 'локально');
+  // (platform label removed from HUD)
 
   // -------------------------------------------------------------- game state
   let mode: Mode = 'menu';
@@ -252,8 +252,13 @@ async function boot(): Promise<void> {
 
   const menu = new Menu(document.body, PLAYER_CARS, MAPS, {
     onCar: (i) => void switchCar(PLAYER_CARS[i]),
-    onMap: (i) => void switchMap(MAPS[i]),
-    onPlay: () => startRun(),
+    onBuy: () => {},
+    onTestDrive: () => {},
+    onScreen: () => {},
+    onSettings: () => {},
+    onTuning: () => {},
+    onReward: () => {},
+    onPlay: (i) => void switchMap(MAPS[i]).then(() => startRun()),
     onRestart: () => {
       void platform.showInterstitial();
       startRun();
@@ -264,26 +269,19 @@ async function boot(): Promise<void> {
       void platform.showInterstitial();
       toMenu();
     },
-    onVolume: (v) => {
-      audio.setVolume(v);
-      save.volume = v;
-      void platform.saveData(save);
-    },
     onClick: () => {
       audio.unlock();
       audio.click();
     },
   });
   menu.setCar(Math.max(0, PLAYER_CARS.indexOf(spec)));
-  menu.selectMap(Math.max(0, MAPS.indexOf(map)));
-  menu.setVolume(save.volume ?? 0.8);
   menu.setBest(save.bestScore ?? 0, save.bestKm ?? 0);
 
   const toMenu = () => {
     mode = 'menu';
     rig.showcase = true;
     hud.setPlaying(false);
-    menu.showMain();
+    menu.go('lobby');
     menu.setBest(save.bestScore ?? 0, save.bestKm ?? 0);
     audio.setMuted(adPaused);
     platform.gameplayStop();
@@ -338,6 +336,8 @@ async function boot(): Promise<void> {
       km,
       nearMisses: scoring.nearMisses,
       maxCombo,
+      earned: 0,
+      testDrive: false,
       best: save.bestScore,
       newBest,
       crashed: wrecked,
@@ -353,8 +353,8 @@ async function boot(): Promise<void> {
   const togglePause = () => (mode === 'play' ? setPaused(true) : mode === 'paused' ? setPaused(false) : undefined);
   input.onKey('Escape', togglePause);
   input.onKey('KeyP', togglePause);
-  input.onKey('Enter', () => (menu.onMain ? startRun() : undefined));
-  input.onKey('Space', () => (menu.onMain ? startRun() : undefined));
+  input.onKey('Enter', () => (menu.current === 'lobby' ? startRun() : undefined));
+  input.onKey('Space', () => (menu.current === 'lobby' ? startRun() : undefined));
   // Keys 1–9, then 0 for the tenth car (menu only: no mid-run swaps).
   PLAYER_CARS.forEach((c, i) =>
     input.onKey(`Digit${(i + 1) % 10}`, () => {
@@ -506,6 +506,12 @@ async function boot(): Promise<void> {
           multiplier: scoring.multiplier,
           comboLeft: scoring.multiplier > 1 ? scoring.comboTimer / 3.5 : 0,
           km: (car.s - runStart) / 1000,
+          showFps: false,
+          rpm01: car.rpm / car.handling.redline,
+          gear: String(car.gear),
+          abs: car.absActive,
+          esp: car.espActive,
+          tcs: car.tcsActive,
         });
       }
     },
