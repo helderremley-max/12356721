@@ -3,12 +3,14 @@ import { CHUNK_LENGTH, VIEW_AHEAD, VIEW_BEHIND } from '../config';
 import type { Materials } from '../graphics/Materials';
 import { RoadChunkBuilder, type RoadChunk } from './RoadChunkBuilder';
 import { RoadLayout } from './RoadLayout';
+import { cityState } from '../graphics/city/CityState';
 
 /** Streams road chunks around the camera; builds a bounded number per frame. */
 export class RoadStreamer {
   readonly layout: RoadLayout;
   private builder: RoadChunkBuilder;
   private chunks = new Map<number, RoadChunk>();
+  private builtWith = new Map<number, number>();
   private readonly maxBuildsPerFrame = 2;
   /** Streamed road ahead of the player, m (settings → draw distance). */
   viewAhead = VIEW_AHEAD;
@@ -39,14 +41,19 @@ export class RoadStreamer {
       if (i < first || i > last) {
         chunk.dispose();
         this.chunks.delete(i);
+        this.builtWith.delete(i);
       }
     }
     let built = 0;
     for (let i = first; i <= last && built < budget; i++) {
-      if (this.chunks.has(i)) continue;
+      const old = this.chunks.get(i);
+      // A changed city detail level rebuilds chunks in place, a few per frame.
+      if (old && this.builtWith.get(i) === cityState.version) continue;
       const chunk = this.builder.build(i, i * CHUNK_LENGTH, (i + 1) * CHUNK_LENGTH);
       this.root.add(chunk.group);
+      old?.dispose();
       this.chunks.set(i, chunk);
+      this.builtWith.set(i, cityState.version);
       built++;
     }
   }

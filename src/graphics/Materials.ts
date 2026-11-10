@@ -4,14 +4,13 @@ import {
   createAsphalt,
   createConcrete,
   createDistancePlate,
-  createFacade,
   createGrass,
   createLaneSign,
   createMarkingWear,
   createMergeArrow,
-  type FacadeTextures,
 } from './ProceduralTextures';
 import { createRoadMaterial, setRoadWetness } from './RoadMaterial';
+import { CityMaterials } from './city/CityMaterials';
 
 export type SignKind = 'start' | 'end';
 
@@ -28,10 +27,9 @@ export class Materials {
   readonly lampHead: THREE.MeshStandardMaterial;
   readonly lampLens: THREE.MeshStandardMaterial;
   readonly signBack: THREE.MeshStandardMaterial;
-  readonly facades: THREE.MeshStandardMaterial[];
+  readonly city: CityMaterials;
   private readonly signs = new Map<string, THREE.MeshStandardMaterial>();
   private readonly plates = new Map<string, THREE.MeshStandardMaterial>();
-  private readonly facadeTex: FacadeTextures[];
   /** Signs are created lazily per chunk, so they read the current preset's glow. */
   private signGlow = 0.04;
 
@@ -101,18 +99,7 @@ export class Materials {
     });
     this.signBack = new THREE.MeshStandardMaterial({ color: 0x8e9399, metalness: 0.7, roughness: 0.55 });
 
-    this.facadeTex = [11, 23, 37, 41].map((seed) => createFacade(anisotropy, seed));
-    this.facades = this.facadeTex.map(
-      (t) =>
-        new THREE.MeshStandardMaterial({
-          map: t.map,
-          emissiveMap: t.emissive,
-          emissive: 0xffffff,
-          emissiveIntensity: 0.2,
-          roughness: 0.55,
-          metalness: 0.25,
-        }),
-    );
+    this.city = new CityMaterials(anisotropy, mobile, concreteTex);
   }
 
   /** Retro-reflective sign face (emissive keeps it readable in headlights at night). */
@@ -146,7 +133,7 @@ export class Materials {
       m.needsUpdate = true;
     }
     this.lampLens.emissiveIntensity = night ? 3.5 : 0;
-    for (const m of this.facades) m.emissiveIntensity = night ? 2.6 : 0.08;
+    this.city.applyPreset(preset);
     this.signGlow = night ? 0.35 : 0.04;
     for (const m of [...this.signs.values(), ...this.plates.values()]) m.emissiveIntensity = this.signGlow;
     this.concrete.roughness = night ? 0.55 : 0.88;
