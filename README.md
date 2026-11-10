@@ -36,7 +36,7 @@ If a download fails, the game falls back to the next source: Sketchfab → Kenne
 ### Controls
 
 The game opens in the lobby: the car stands in a photoreal evening courtyard (Poly Haven `neuer_zollhof`, projected
-onto the ground with `GroundedSkybox`; drag to orbit). Pick a car (‹ ›), press **Играть**, choose a track.
+onto the ground with `GroundedSkybox`; drag to orbit). Pick a car in the garage strip, press **В путь**, choose a route.
 
 | Key | Action |
 | --- | --- |
@@ -57,21 +57,28 @@ URL params: `?map=sunset|rush|night`, `?car=e34`, `?play=1` (skip the lobby), `?
 
 ### Menu, settings, economy
 
-- Top bar: player name (from the SDK when signed in), shop · screen title · settings, cash with a rewarded-video
-  button (+5 000).
-- Lobby: characteristics card (top speed, power, 0–100 measured by the real physics, weight, drive), **Тюнинг** and
-  **Играть**, or **Купить** / **Тест-драйв** (after a rewarded video) for cars you don't own.
-- Tuning (owned cars, free): paint (14 colours), rim colour, window tint, ride height; saved per car.
-- Shop: every car with price and status. Start cash 20 000; a run pays `0.35 × score + 400 × km` (half after a
-  wreck, nothing in a test drive or with ghost traffic). Prices are in `src/gameplay/economy.ts`.
-- Settings (saved with the profile):
-  - **Игра** — volume, camera view, camera inertia, FPS counter;
-  - **Машина** — gearbox (auto / manual), driving style (arcade / standard / simulator), drive (car's own / FWD /
-    RWD / AWD), ABS / ESP / TCS;
-  - **Трафик** — density (×0.55 … ×1.9 of the track's own), flow speed (×0.8 / 1 / 1.2), bot lane changes, ghost bots
-    (no collisions, no points);
-  - **Графика** — quality (pixel-ratio cap, shadow map 0/1k/2k/4k, MSAA 0/0/4/8, bloom and lens effects), render
-    resolution 40–100 %, FPS cap 30 / 60 / unlimited, draw distance 300–1100 m (road streaming + fog).
+The UI has its own visual identity (dark glass panels, lime accent, Unbounded + Manrope fonts, line icons); it is
+deliberately not modelled on any other game's layout.
+
+- Header: brand, **Бонус** (rewarded video, +5 000 credits), wallet, player name (from the SDK when signed in).
+- Navigation rail on the left: Гараж · Маршруты · Тюнинг · Автосалон · Опции.
+- Garage: car card (class D–S, top speed, 0–100 measured by the real physics, power, handling) with segmented
+  bars, a garage strip of every car along the bottom, and **В путь** / **Тюнинг**, or **Купить** / **Тест-драйв**
+  (after a rewarded video) for cars you don't own.
+- Маршруты: three route cards (sunset, midday rush, night) with an illustrated skyline.
+- Тюнинг (owned cars, free): colour (14), rim colour, window tint, ride height; saved per car. Cars whose livery is
+  baked into the texture can't be resprayed.
+- Автосалон: every car with class, specs, price and status. Start with 20 000 credits; a run pays
+  `0.35 × score + 400 × km` (half after a wreck, nothing in a test drive or in ghost mode). Prices are in
+  `src/gameplay/economy.ts`.
+- Опции (saved with the profile):
+  - **Общие** — volume, camera view, camera smoothness, FPS counter;
+  - **Вождение** — transmission (automatic / manual), control mode (easy / normal / realism), driven wheels (car's
+    own / FWD / RWD / AWD), ABS / ESP / TCS switches;
+  - **Поток** — traffic density (×0.55 … ×1.9 of the route's own), flow speed (×0.8 / 1 / 1.2), lane changes, ghost
+    mode (no collisions, no points);
+  - **Изображение** — quality (pixel-ratio cap, shadow map 0/1k/2k/4k, MSAA 0/0/4/8, bloom and lens effects),
+    sharpness (render scale 40–100 %), frame cap 30 / 60 / none, road view distance 300–1100 m (streaming + fog).
 
 ### Maps
 
@@ -201,7 +208,7 @@ up to 1.4 rad/s at 150 km/h, slip capped by force), so the car darted left/right
 **Menu, audio, image**
 
 - Lobby in a showroom scene (`src/graphics/Showroom.ts`), shop, tuning, settings with tabs, track choice; pause and
-  results screens (with the cash earned); best score and distance saved through the SDK. Condensed UI font: Oswald
+  results screens (with the credits earned); best score and distance saved through the SDK. UI fonts: Unbounded and Manrope
   (SIL OFL, bundled in `src/assets/fonts`).
 - Procedural Web Audio, no samples: an engine synth per car (cylinder count, idle/redline, gear count, turbo, grit)
   driven by a simulated gearbox with shift cuts, load-dependent timbre, turbo whistle and blow-off, overrun
