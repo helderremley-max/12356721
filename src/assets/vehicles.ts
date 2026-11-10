@@ -212,6 +212,8 @@ export interface TrafficSpec {
   wheelDiameter: number;
   paints: number[];
   weight: number;
+  /** Model faces backwards after auto-detection. */
+  flip?: boolean;
 }
 
 const CIVIL_PAINTS = [0xdedede, 0x1a1a1c, 0x8c9096, 0x5b1a1a, 0x23324a, 0xc9c3b4, 0x2f3d33, 0x7a7d80];
@@ -221,14 +223,14 @@ export const TRAFFIC_CARS: TrafficSpec[] = [
   { id: 'sedan', sources: [traffic('sedan'), kenney('sedan')], length: 4.6, width: 1.8, height: 1.45, wheelDiameter: 0.64, paints: CIVIL_PAINTS, weight: 4 },
   { id: 'sedan2', sources: [traffic('sedan2'), kenney('sedan')], length: 4.7, width: 1.82, height: 1.45, wheelDiameter: 0.66, paints: CIVIL_PAINTS, weight: 3 },
   { id: 'hatch', sources: [traffic('hatch'), kenney('hatchback-sports')], length: 4.2, width: 1.76, height: 1.45, wheelDiameter: 0.62, paints: CIVIL_PAINTS, weight: 3 },
-  { id: 'compact', sources: [traffic('compact'), kenney('hatchback-sports')], length: 3.9, width: 1.7, height: 1.5, wheelDiameter: 0.6, paints: CIVIL_PAINTS, weight: 2 },
-  { id: 'wagon', sources: [traffic('wagon'), kenney('sedan')], length: 4.7, width: 1.8, height: 1.5, wheelDiameter: 0.64, paints: CIVIL_PAINTS, weight: 2 },
-  { id: 'coupe', sources: [traffic('coupe'), kenney('sedan-sports')], length: 4.4, width: 1.8, height: 1.35, wheelDiameter: 0.64, paints: CIVIL_PAINTS, weight: 1 },
+  { id: 'compact', sources: [traffic('compact'), kenney('hatchback-sports')], length: 3.9, width: 1.7, height: 1.5, wheelDiameter: 0.6, paints: CIVIL_PAINTS, weight: 2, flip: true },
+  { id: 'wagon', sources: [traffic('wagon'), kenney('sedan')], length: 4.7, width: 1.8, height: 1.5, wheelDiameter: 0.64, paints: CIVIL_PAINTS, weight: 2, flip: true },
+  { id: 'coupe', sources: [traffic('coupe'), kenney('sedan-sports')], length: 4.4, width: 1.8, height: 1.35, wheelDiameter: 0.64, paints: CIVIL_PAINTS, weight: 1, flip: true },
   { id: 'red', sources: [traffic('redcar'), kenney('sedan')], length: 4.4, width: 1.78, height: 1.45, wheelDiameter: 0.63, paints: [-1], weight: 1 },
-  { id: 'blue', sources: [traffic('bluecar'), kenney('sedan')], length: 4.4, width: 1.78, height: 1.45, wheelDiameter: 0.63, paints: [-1], weight: 1 },
+  { id: 'blue', sources: [traffic('bluecar'), kenney('sedan')], length: 4.4, width: 1.78, height: 1.45, wheelDiameter: 0.63, paints: [-1], weight: 1, flip: true },
   { id: 'suv', sources: [traffic('suv'), kenney('suv')], length: 4.8, width: 1.92, height: 1.78, wheelDiameter: 0.76, paints: CIVIL_PAINTS, weight: 3 },
   { id: 'pickup', sources: [traffic('pickup'), kenney('truck')], length: 5.3, width: 1.9, height: 1.8, wheelDiameter: 0.78, paints: CIVIL_PAINTS, weight: 1 },
-  { id: 'van', sources: [traffic('van'), kenney('van')], length: 5.3, width: 2.0, height: 2.25, wheelDiameter: 0.7, paints: [0xf2f2f2, 0xd8d8d8], weight: 2 },
+  { id: 'van', sources: [traffic('van'), kenney('van')], length: 5.3, width: 2.0, height: 2.25, wheelDiameter: 0.7, paints: [0xf2f2f2, 0xd8d8d8], weight: 2, flip: true },
   { id: 'police', sources: [traffic('police'), kenney('police')], length: 4.8, width: 1.85, height: 1.55, wheelDiameter: 0.66, paints: [-1], weight: 1 },
 ];
 
