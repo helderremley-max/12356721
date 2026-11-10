@@ -77,8 +77,8 @@ deliberately not modelled on any other game's layout.
     own / FWD / RWD / AWD), ABS / ESP / TCS switches;
   - **Поток** — traffic density (×0.55 … ×1.9 of the route's own), flow speed (×0.8 / 1 / 1.2), lane changes, ghost
     mode (no collisions, no points);
-  - **Изображение** — quality (pixel-ratio cap, shadow map 0/1k/2k/4k, MSAA 0/0/4/8, bloom and lens effects),
-    sharpness (render scale 40–100 %), frame cap 30 / 60 / none, road view distance 300–1100 m (streaming + fog).
+  - **Изображение** — quality (pixel-ratio cap, shadow map 1k/1k/2k/4k, MSAA 0/0/4/8, bloom and lens effects),
+    shadows (off / crisp / soft — PCF filter radius 1 vs 4; `PCFSoftShadowMap` no longer exists in three r187), sharpness (render scale 40–100 %), frame cap 30 / 60 / none, road view distance 300–1100 m (streaming + fog).
 
 ### Maps
 

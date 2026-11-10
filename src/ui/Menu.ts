@@ -150,6 +150,13 @@ const PAGES: { id: string; title: string; rows: Row[] }[] = [
     title: 'Изображение',
     rows: [
       { kind: 'seg', label: 'Качество', key: 'quality', options: [['low', 'Эконом'], ['medium', 'Баланс'], ['high', 'Высокое'], ['ultra', 'Максимум']] },
+      {
+        kind: 'seg',
+        label: 'Тени',
+        desc: 'Мягкие — с размытым краем, как от настоящего солнца',
+        key: 'shadows',
+        options: [['off', 'Выкл'], ['hard', 'Чёткие'], ['soft', 'Мягкие']],
+      },
       { kind: 'slider', label: 'Чёткость', desc: 'Масштаб рендеринга', key: 'resolution', min: 0.4, max: 1, step: 0.1, lazy: true, unit: (v) => `${Math.round(v * 100)}%` },
       { kind: 'seg', label: 'Ограничение кадров', key: 'fpsLimit', options: [[30, '30'], [60, '60'], [0, 'Нет']] },
       { kind: 'slider', label: 'Обзор дороги', key: 'drawDistance', min: 300, max: 1100, step: 50, unit: (v) => `${v} м` },

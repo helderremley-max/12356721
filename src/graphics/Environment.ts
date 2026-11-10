@@ -258,6 +258,12 @@ export class Environment {
     (this.scene.fog as THREE.FogExp2).density = this.fogDensity();
   }
 
+  /** Shadow map resolution (0 turns the sun's shadows off) and PCF filter radius (1 = crisp, 3+ = soft). */
+  setShadows(size: number, radius: number): void {
+    this.setShadowSize(size);
+    this.sun.shadow.radius = radius;
+  }
+
   /** Shadow map resolution; 0 turns the sun's shadows off. */
   setShadowSize(size: number): void {
     const on = size > 0;

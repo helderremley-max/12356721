@@ -41,7 +41,7 @@ const LANE_LABELS: Record<number, string> = { [-1]: 'Карман слева', 0
 
 /** Graphics presets: pixel-ratio cap, sun shadow map, MSAA, bloom, speed lens effects. */
 const QUALITY: Record<Quality, { pr: number; shadow: number; samples: number; bloom: boolean; lens: boolean }> = {
-  low: { pr: 1, shadow: 0, samples: 0, bloom: false, lens: false },
+  low: { pr: 1, shadow: 1024, samples: 0, bloom: false, lens: false },
   medium: { pr: 1.25, shadow: 1024, samples: 0, bloom: true, lens: true },
   high: { pr: 1.5, shadow: 2048, samples: 4, bloom: true, lens: true },
   ultra: { pr: 2, shadow: 4096, samples: 8, bloom: true, lens: true },
@@ -186,7 +186,8 @@ async function boot(): Promise<void> {
     renderer.setSize(innerWidth, innerHeight);
     post.setSize(innerWidth, innerHeight);
     post.setQuality(mobile ? 0 : q.samples, q.bloom, q.lens);
-    env.setShadowSize(mobile ? Math.min(q.shadow, 1024) : q.shadow);
+    const size = settings.shadows === 'off' ? 0 : mobile ? Math.min(q.shadow, 1024) : q.shadow;
+    env.setShadows(size, settings.shadows === 'soft' ? (mobile ? 2.5 : 4) : 1);
   };
   const applySettings = () => {
     audio.setVolume(settings.volume);
@@ -417,7 +418,7 @@ async function boot(): Promise<void> {
       if (s === 'lobby') testDrive = menu.testDriveArmed = false;
     },
     onSettings: (patch) => {
-      const graphics = 'quality' in patch || 'resolution' in patch;
+      const graphics = 'quality' in patch || 'resolution' in patch || 'shadows' in patch;
       Object.assign(settings, patch);
       if ('camera' in patch) rig.mode = settings.camera;
       applySettings();

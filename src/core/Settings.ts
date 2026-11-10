@@ -5,6 +5,7 @@ export type Gearbox = 'auto' | 'manual';
 export type DrivingStyle = 'arcade' | 'standard' | 'sim';
 export type DriveOverride = 'stock' | Drivetrain;
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
+export type Shadows = 'off' | 'hard' | 'soft';
 export type TrafficDensity = 'low' | 'normal' | 'high' | 'extreme';
 export type TrafficPace = 'slow' | 'normal' | 'fast';
 export type CameraView = 'chase' | 'far' | 'bumper';
@@ -32,6 +33,8 @@ export interface Settings {
   ghostTraffic: boolean;
   // Graphics
   quality: Quality;
+  /** Sun shadows: off, crisp edges, or soft penumbra (PCF with a wide filter radius). */
+  shadows: Shadows;
   /** Render scale, 0.4..1. */
   resolution: number;
   /** 0 = unlimited (vsync). */
@@ -56,6 +59,7 @@ export const DEFAULT_SETTINGS: Settings = {
   trafficLaneChanges: true,
   ghostTraffic: false,
   quality: 'high',
+  shadows: 'soft',
   resolution: 1,
   fpsLimit: 0,
   drawDistance: 1100,
