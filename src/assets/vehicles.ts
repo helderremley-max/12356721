@@ -21,6 +21,11 @@ export interface Handling {
   /** Suspension natural frequency (Hz) and damping ratio of the body motion. */
   suspensionHz: number;
   damping: number;
+  /** Gearbox and engine speed range; a CVT holds the revs at peak power instead of shifting. */
+  gears: number;
+  idleRpm: number;
+  redline: number;
+  cvt: boolean;
 }
 
 export interface VehicleSpec {
@@ -77,8 +82,26 @@ function handling(h: HandlingInput): Handling {
     pitchGain: 0.0065 - 0.004 * s,
     suspensionHz: 1.1 + 0.85 * s,
     damping: 0.3 + 0.4 * s,
+    gears: 5,
+    idleRpm: 800,
+    redline: 6800,
+    cvt: false,
   };
 }
+
+/** Engines (match the sound profiles in AudioEngine). */
+const ENGINES: Record<string, Pick<Handling, 'gears' | 'idleRpm' | 'redline' | 'cvt'>> = {
+  zhiga: { gears: 4, idleRpm: 850, redline: 6000, cvt: false },
+  prius: { gears: 1, idleRpm: 1000, redline: 5200, cvt: true },
+  camry: { gears: 6, idleRpm: 700, redline: 6600, cvt: false },
+  e34: { gears: 5, idleRpm: 750, redline: 6500, cvt: false },
+  samurai: { gears: 5, idleRpm: 800, redline: 7200, cvt: false },
+  sl300: { gears: 4, idleRpm: 750, redline: 6200, cvt: false },
+  evo: { gears: 5, idleRpm: 900, redline: 7000, cvt: false },
+  r34: { gears: 6, idleRpm: 850, redline: 7600, cvt: false },
+  supra: { gears: 6, idleRpm: 800, redline: 7000, cvt: false },
+  m4: { gears: 8, idleRpm: 800, redline: 7300, cvt: false },
+};
 
 /**
  * Player garage, ordered from the worst car to the best. The local models
@@ -177,6 +200,7 @@ export const PLAYER_CARS: VehicleSpec[] = [
     handling: handling({ massKg: 1725, kw: 375, topKmh: 305, drivetrain: 'AWD', grip: 12.8, yawLag: 0.06, rack: [6, 3.5], stiffness: 0.9 }),
   },
 ];
+for (const c of PLAYER_CARS) Object.assign(c.handling, ENGINES[c.id]);
 
 /** Traffic body types for the Step 4 pool (paint `-1` keeps the model's own livery). */
 export interface TrafficSpec {
