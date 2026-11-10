@@ -405,15 +405,16 @@ async function boot(): Promise<void> {
       void platform.showRewarded().then((ok) => {
         if (!ok || PLAYER_CARS[i].id !== spec.id) return;
         testDrive = true;
+        menu.testDriveArmed = true;
         menu.go('maps');
       });
     },
     onPlay: (i) => void startRun(MAPS[i]),
     onScreen: (s: Screen) => {
       if (mode !== 'lobby') return;
-      showroom.setView(s === 'tuning' ? 'tuning' : s === 'lobby' || s === 'maps' ? 'lobby' : 'settings');
+      showroom.setView(s === 'tuning' ? 'tuning' : 'lobby');
       showroom.setActive(s === 'lobby' || s === 'tuning');
-      if (s === 'lobby') testDrive = false;
+      if (s === 'lobby') testDrive = menu.testDriveArmed = false;
     },
     onSettings: (patch) => {
       const graphics = 'quality' in patch || 'resolution' in patch;
