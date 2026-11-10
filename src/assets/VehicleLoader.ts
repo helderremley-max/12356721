@@ -67,6 +67,8 @@ interface PartTemplate {
   /** Class per geometry group (or a single entry when ungrouped). */
   classes: PartClass[];
   originals: THREE.Material[];
+  /** Source node chain, kept on the mesh for debugging. */
+  label: string;
   /** Wheel parts that steer but don't roll (brake calipers). */
   fixed?: boolean;
 }
@@ -83,6 +85,8 @@ interface Template {
   box: THREE.Box3;
   liveryColor: THREE.Color | null;
   headlight: THREE.Vector3 | null;
+  /** The model has a cabin behind its windows. */
+  interior: boolean;
 }
 
 interface TriInfo {
@@ -267,9 +271,11 @@ function classifyByName(name: string): PartClass | null {
   const n = name.toLowerCase();
   if (/interior|cabin|seat|dash|steering|pedal|carpet|leather|gauge|speedo/.test(n)) return 'keep';
   // Lamp lenses are often named "*_glass", so lights are matched before glass.
-  if (/tail|brake_?light|rear_?light|stop_?l|lights_red|red_?lights?|backlight|reverse/.test(n)) return 'tail';
-  if (/head|light|lamp|\bleds?\b|leds|projector|drl|fog/.test(n)) return 'head';
-  if (/glass|window|windshield|windscreen/.test(n)) return 'glass';
+  if (/(?<!de|re)tail|brake_?light|rear_?light|stop_?l|lights_red|red_?lights?|backlight|reverse/.test(n)) return 'tail';
+  if (/head(?!rest|liner)|(?<!high)light|lamp|\bleds?\b|leds|projector|drl|fog/.test(n)) return 'head';
+  // Rubber around the glass must not become glass (or body paint, via a "body" parent).
+  if (/(win|window|glass|screen)[_\s.-]?(frame|seal|rubber|gasket|molding|trim)/.test(n)) return 'trim';
+  if (/glass|window|windshield|windscreen|(^|[_\s.-])win([_\s.-]|$)/.test(n)) return 'glass';
   if (/chrome/.test(n)) return 'chrome';
   if (/tire|tyre|rubber/.test(n)) return 'tire';
   if (/\brim|rim_|wheel|\bdisc|hubcap/.test(n)) return 'rim';
@@ -287,6 +293,28 @@ const BADGE_RE = /logo|badge|emblem|lettering|decal|brand/i;
  */
 function nameClass(mat: THREE.Material, chain: string): PartClass | null {
   return classifyByName(mat.name) ?? classifyByName(chain);
+}
+
+const isTransparent = (mat: THREE.Material) => {
+  const p = mat as THREE.MeshPhysicalMaterial;
+  return (p.transmission ?? 0) > 0.05 || (mat.transparent && mat.opacity < 0.9);
+};
+
+/** Class of one material slot: names first, then transparency (windows, lamp covers). */
+function slotClassOf(mat: THREE.Material, chain: string): PartClass | null {
+  const byMat = classifyByName(mat.name);
+  const cls = byMat ?? classifyByName(chain);
+  if (!isTransparent(mat)) return cls;
+  if (cls === 'head') return 'lens';
+  if (cls === 'tail') return 'taillens';
+  // A "body" parent must not turn a transparent pane into paint.
+  if (cls !== null && !(cls === 'paint' && byMat === null)) return cls;
+  const c = (mat as THREE.MeshStandardMaterial).color;
+  if (!c) return 'glass';
+  const mx = Math.max(c.r, c.g, c.b);
+  const saturated = mx > 0.2 && (mx - Math.min(c.r, c.g, c.b)) / mx > 0.55;
+  if (saturated && c.r > c.g * 2 && c.r > c.b * 2) return 'taillens';
+  return saturated ? 'keep' : 'glass';
 }
 const GROUND_RE = /shadow|ground|floor|backdrop|\bplane\b|platform|stage/i;
 
@@ -527,12 +555,22 @@ function extractWheelsByGeometry(
   return { replaced, wheels };
 }
 
-function triangleArea(geo: THREE.BufferGeometry, toModel: THREE.Matrix4, start: number, count: number, out: { area: number; yMax: number; yMin: number }): void {
+function triangleArea(
+  geo: THREE.BufferGeometry,
+  toModel: THREE.Matrix4,
+  start: number,
+  count: number,
+  out: { area: number; yMax: number; yMin: number },
+  /** Area counts only triangles that pass (centroid, normal), e.g. the outward-facing outer skin. */
+  accept?: (centroid: THREE.Vector3, normal: THREE.Vector3) => boolean,
+): void {
   const pos = geo.getAttribute('position');
   const index = geo.getIndex();
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const ctr = new THREE.Vector3();
   const step = Math.max(1, Math.floor(count / 3 / 4000)); // sample big meshes
   for (let t = start / 3; t < (start + count) / 3; t += step) {
     const ia = index ? index.getX(t * 3) : t * 3;
@@ -541,9 +579,11 @@ function triangleArea(geo: THREE.BufferGeometry, toModel: THREE.Matrix4, start: 
     a.fromBufferAttribute(pos, ia).applyMatrix4(toModel);
     b.fromBufferAttribute(pos, ib).applyMatrix4(toModel);
     c.fromBufferAttribute(pos, ic).applyMatrix4(toModel);
-    out.area += b.clone().sub(a).cross(c.clone().sub(a)).length() * 0.5 * step;
     out.yMax = Math.max(out.yMax, a.y, b.y, c.y);
     out.yMin = Math.min(out.yMin, a.y, b.y, c.y);
+    n.subVectors(b, a).cross(ctr.subVectors(c, a));
+    if (accept && !accept(ctr.copy(a).add(b).add(c).multiplyScalar(1 / 3), n)) continue;
+    out.area += n.length() * 0.5 * step;
   }
 }
 
@@ -837,31 +877,30 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
     else regionClass.set(k, 'plastic');
   }
 
-  // --- Named-material classification, with a paint guess when no name says "paint".
-  const matClass = new Map<THREE.Material, PartClass | null>();
+  // --- Name-based classification per mesh slot (never per material: exporters reuse one
+  // material across unrelated parts, e.g. a lamp's metal also lining the arches), with a
+  // paint guess when no name says "paint".
   const transmissive = (mat: THREE.Material) => {
     const p = mat as THREE.MeshPhysicalMaterial;
     return (p.transmission ?? 0) > 0.05 || (mat.transparent && mat.opacity < 0.75);
   };
+  const slotClass = new Map<THREE.Mesh, (PartClass | null)[]>();
   for (const m of bodyMeshes) {
     if (tris.get(m)) continue;
     const chain = nameChain(m, scene);
-    for (const mat of materialsOf(m)) {
-      if (matClass.has(mat)) continue;
-      let cls = nameClass(mat, chain);
-      if (cls === null && transmissive(mat)) cls = 'glass';
-      matClass.set(mat, cls);
-    }
+    slotClass.set(m, materialsOf(m).map((mat) => nameClass(mat, chain) ?? (transmissive(mat) ? 'glass' : null)));
   }
-  if (![...matClass.values()].includes('paint')) {
+  let guessedPaint: THREE.Material | null = null;
+  if (![...slotClass.values()].flat().includes('paint')) {
     const stats = new Map<THREE.Material, { area: number; yMax: number; yMin: number }>();
     for (const m of bodyMeshes) {
-      if (tris.get(m)) continue;
+      const list = slotClass.get(m);
+      if (!list) continue;
       const mats = materialsOf(m);
       const gs = m.geometry.groups.length ? m.geometry.groups : [{ start: 0, count: m.geometry.getIndex()?.count ?? m.geometry.getAttribute('position').count, materialIndex: 0 }];
       for (const g of gs) {
         const mat = mats[g.materialIndex ?? 0] ?? mats[0];
-        if (matClass.get(mat) !== null) continue;
+        if (list[g.materialIndex ?? 0] !== null) continue;
         const s = stats.get(mat) ?? { area: 0, yMax: -Infinity, yMin: Infinity };
         triangleArea(m.geometry, model.get(m)!, g.start, g.count, s);
         stats.set(mat, s);
@@ -878,10 +917,21 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
         paint = mat;
       }
     }
-    if (paint) matClass.set(paint, 'paint');
+    if (paint) guessedPaint = paint;
   }
-  for (const [mat, cls] of matClass) {
-    if (cls === 'paint' && !liveryColor && (mat as THREE.MeshStandardMaterial).color) liveryColor = (mat as THREE.MeshStandardMaterial).color.clone();
+  // Unnamed panels (doors, bumpers) sharing the body's paint material are paint too.
+  const paintMats = new Set<THREE.Material>(guessedPaint ? [guessedPaint] : []);
+  for (const [m, list] of slotClass) materialsOf(m).forEach((mat, i) => list[i] === 'paint' && paintMats.add(mat));
+  for (const [m, list] of slotClass) {
+    materialsOf(m).forEach((mat, i) => {
+      if (list[i] === null && paintMats.has(mat)) list[i] = 'paint';
+    });
+  }
+  for (const [m, list] of slotClass) {
+    const mats = materialsOf(m);
+    list.forEach((cls, i) => {
+      if (cls === 'paint' && !liveryColor && (mats[i] as THREE.MeshStandardMaterial).color) liveryColor = (mats[i] as THREE.MeshStandardMaterial).color.clone();
+    });
   }
 
   const classifyPalette = (list: TriInfo[], wheel: boolean): PartClass[] =>
@@ -914,7 +964,7 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
       geometry.setIndex(out);
       classes = order;
     } else {
-      classes = originals.map((mat) => {
+      classes = originals.map((mat, i) => {
         if (wheel) {
           const c = nameClass(mat, chain);
           if (c === 'tire') return 'tire';
@@ -923,14 +973,14 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
           // Wheels cut out of a body keep their authored (often textured) materials.
           return c === 'rim' || (c === null && !chain.includes(GEOM_WHEEL)) ? 'rim' : 'keep';
         }
-        return matClass.get(mat) ?? 'keep';
+        return slotClass.get(m)?.[i] ?? 'keep';
       });
       // Name says "light" but it sits at the back: it's a tail light.
       const centre = boxOf(m).getCenter(new THREE.Vector3());
       classes = classes.map((c) => (c === 'head' && (centre.z - midZ) / halfL > 0.3 ? 'tail' : c));
       if (classes.includes('head')) headCentres.push(centre);
     }
-    return { geometry, matrix, classes, originals, fixed: wheel && /caliper/i.test(chain) };
+    return { geometry, matrix, classes, originals, label: `${chain} | ${originals.map((o) => o.name).join(",")}`, fixed: wheel && /caliper/i.test(chain) };
   };
 
   // A rig needs wheels on both axles and both sides; anything less renders them as body.
@@ -979,6 +1029,8 @@ function meshFor(part: PartTemplate, mats: CarMaterialSet): THREE.Mesh {
   const materials = part.classes.map((cls, i) => (cls === 'keep' ? part.originals[Math.min(i, part.originals.length - 1)] : mats.get(cls)));
   const mesh = new THREE.Mesh(part.geometry, materials.length === 1 && !part.geometry.groups.length ? materials[0] : materials);
   part.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+  mesh.userData.classes = part.classes;
+  mesh.userData.label = part.label;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
