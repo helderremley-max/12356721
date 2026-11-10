@@ -17,6 +17,8 @@ export class GameLoop {
   private rafId = 0;
   private running = false;
   fps = 0;
+  /** Frames per second cap, 0 = display rate. */
+  fpsLimit = 0;
   private fpsFrames = 0;
   private fpsTime = 0;
 
@@ -37,6 +39,8 @@ export class GameLoop {
   private tick = (now: number): void => {
     if (!this.running) return;
     this.rafId = requestAnimationFrame(this.tick);
+    // Frame cap: skip vsync ticks until the interval has passed (2 ms slack for jitter).
+    if (this.fpsLimit > 0 && now - this.last < 1000 / this.fpsLimit - 2) return;
 
     // Clamp so a background tab or GC pause never explodes the simulation.
     // The first rAF timestamp can precede start(), so clamp below too.
