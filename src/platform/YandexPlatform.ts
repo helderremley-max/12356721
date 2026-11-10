@@ -20,6 +20,8 @@ export interface Platform {
   showInterstitial(): Promise<boolean>;
   /** Rewarded video; resolves true if the reward should be granted. */
   showRewarded(): Promise<boolean>;
+  /** Display name of the signed-in player, or '' when anonymous. */
+  playerName(): Promise<string>;
   /** Paused by the platform (ads) or by the tab being hidden. */
   onPauseChange(cb: (paused: boolean) => void): void;
 }
@@ -28,6 +30,7 @@ export interface Platform {
 interface YaPlayer {
   getData(keys?: string[]): Promise<Record<string, unknown>>;
   setData(data: object, flush?: boolean): Promise<void>;
+  getName?(): string;
 }
 interface YaSdk {
   features: {
@@ -55,6 +58,7 @@ const INTERSTITIAL_COOLDOWN_MS = 60_000;
 
 abstract class BasePlatform implements Platform {
   abstract readonly kind: 'yandex' | 'local';
+  abstract playerName(): Promise<string>;
   private pauseListeners: ((paused: boolean) => void)[] = [];
   private adPaused = false;
   private hidden = document.hidden;
@@ -147,6 +151,15 @@ class YandexPlatform extends BasePlatform {
     await p?.setData(data).catch(() => undefined);
   }
 
+  async playerName(): Promise<string> {
+    const p = await this.player;
+    try {
+      return p?.getName?.() ?? '';
+    } catch {
+      return '';
+    }
+  }
+
   async submitScore(leaderboard: string, score: number): Promise<void> {
     // Only authorized players can post scores.
     if (!(await this.sdk.isAvailableMethod('leaderboards.setScore').catch(() => false))) return;
@@ -232,6 +245,10 @@ class LocalPlatform extends BasePlatform {
   async showRewarded(): Promise<boolean> {
     console.info('[platform] rewarded video (local, granted)');
     return true;
+  }
+
+  async playerName(): Promise<string> {
+    return '';
   }
 }
 

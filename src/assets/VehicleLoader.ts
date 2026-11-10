@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { CarMaterialSet, createContactShadow, type PartClass } from './CarMaterials';
+import { CarMaterialSet, createContactShadow, limitGlare, type PartClass } from './CarMaterials';
 
 /**
  * Turns an arbitrary car .glb into a game-ready rig:
@@ -67,6 +67,8 @@ interface PartTemplate {
   /** Class per geometry group (or a single entry when ungrouped). */
   classes: PartClass[];
   originals: THREE.Material[];
+  /** Source node chain, kept on the mesh for debugging. */
+  label: string;
   /** Wheel parts that steer but don't roll (brake calipers). */
   fixed?: boolean;
 }
@@ -83,6 +85,8 @@ interface Template {
   box: THREE.Box3;
   liveryColor: THREE.Color | null;
   headlight: THREE.Vector3 | null;
+  /** The model has a cabin behind its windows. */
+  interior: boolean;
 }
 
 interface TriInfo {
@@ -96,6 +100,21 @@ interface TriInfo {
 const WHEEL_RE = /wheel|tire|tyre|(?<![tp])rim|brake_?disc|caliper/i;
 const RED = (c: number[]) => c[0] > 0.55 && c[1] < 0.42 && c[2] < 0.42;
 const YELLOW = (c: number[]) => c[0] > 0.85 && c[1] > 0.65 && c[2] < 0.5;
+/** Same hue family (coloured), or similar lightness (neutral). */
+function sameShade(a: number[], b: number[]): boolean {
+  const hue = (c: number[]) => {
+    const mx = Math.max(...c);
+    const d = mx - Math.min(...c);
+    if (d === 0) return 0;
+    const h = mx === c[0] ? ((c[1] - c[2]) / d + 6) % 6 : mx === c[1] ? (c[2] - c[0]) / d + 2 : (c[0] - c[1]) / d + 4;
+    return h / 6;
+  };
+  if (sat(a) > 0.3 && sat(b) > 0.3) {
+    const d = Math.abs(hue(a) - hue(b));
+    return Math.min(d, 1 - d) < 0.04 && lum(a) > 0.1;
+  }
+  return sat(a) <= 0.2 && sat(b) <= 0.2 && Math.abs(lum(a) - lum(b)) < 0.1;
+}
 const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 const sat = (c: number[]) => {
   const mx = Math.max(...c);
@@ -182,7 +201,7 @@ function paletteOf(tex: THREE.Texture): Palette | null {
     const stack: number[] = [];
     const close = (a: number, b: number) =>
       Math.abs(px[a * 4] - px[b * 4]) <= 6 && Math.abs(px[a * 4 + 1] - px[b * 4 + 1]) <= 6 && Math.abs(px[a * 4 + 2] - px[b * 4 + 2]) <= 6;
-    for (let seed = 0; seed < w * h && sums.length <= 256; seed++) {
+    for (let seed = 0; seed < w * h && sums.length < 4096; seed++) {
       if (region[seed] >= 0) continue;
       const id = sums.length;
       const sum = [0, 0, 0, 0];
@@ -205,7 +224,11 @@ function paletteOf(tex: THREE.Texture): Palette | null {
       }
       sums.push(sum);
     }
-    if (sums.length <= 256) {
+    // A palette is a few hundred big swatches (gradients included); photo textures shatter into
+    // thousands of small regions.
+    const bigMin = w * h * 0.0012;
+    const big = sums.filter((v) => v[3] >= bigMin);
+    if (big.length <= 256 && big.reduce((acc, v) => acc + v[3], 0) >= w * h * 0.8) {
       result = { width: w, height: h, region, colors: sums.map((s) => [s[0] / s[3] / 255, s[1] / s[3] / 255, s[2] / s[3] / 255]) };
     }
   } catch {
@@ -242,7 +265,7 @@ function sampleTriangles(mesh: THREE.Mesh, toModel: THREE.Matrix4): TriInfo[] | 
     // glTF textures aren't flipped: v = 0 is the top row.
     const x = Math.min(pal.width - 1, Math.max(0, Math.floor((((t.x % 1) + 1) % 1) * pal.width)));
     const y = Math.min(pal.height - 1, Math.max(0, Math.floor((((t.y % 1) + 1) % 1) * pal.height)));
-    const region = pal.region[y * pal.width + x];
+    const region = Math.max(0, pal.region[y * pal.width + x]);
     a.fromBufferAttribute(pos, ia);
     b.fromBufferAttribute(pos, ib);
     c.fromBufferAttribute(pos, ic);
@@ -267,10 +290,13 @@ function classifyByName(name: string): PartClass | null {
   const n = name.toLowerCase();
   if (/interior|cabin|seat|dash|steering|pedal|carpet|leather|gauge|speedo/.test(n)) return 'keep';
   // Lamp lenses are often named "*_glass", so lights are matched before glass.
-  if (/tail|brake_?light|rear_?light|stop_?l|lights_red|red_?lights?|backlight|reverse/.test(n)) return 'tail';
-  if (/head|light|lamp|\bleds?\b|leds|projector|drl|fog/.test(n)) return 'head';
-  if (/glass|window|windshield|windscreen/.test(n)) return 'glass';
+  if (/(?<!de|re)tail|brake_?light|rear_?light|stop_?l|lights_red|red_?lights?|backlight|reverse/.test(n)) return 'tail';
+  if (/head(?!rest|liner)|(?<!high)light|lamp|\bleds?\b|leds|projector|drl|fog/.test(n)) return 'head';
+  // Rubber around the glass must not become glass (or body paint, via a "body" parent).
+  if (/(win|window|glass|screen)[_\s.-]?(frame|seal|rubber|gasket|molding|trim)/.test(n)) return 'trim';
+  if (/glass|window|windshield|windscreen|(^|[_\s.-])win([_\s.-]|$)/.test(n)) return 'glass';
   if (/chrome/.test(n)) return 'chrome';
+  if (/gr[il]l/.test(n)) return 'trim';
   if (/tire|tyre|rubber/.test(n)) return 'tire';
   if (/\brim|rim_|wheel|\bdisc|hubcap/.test(n)) return 'rim';
   if (/paint|body|carpaint|car_paint|colou?r|exterior|\bshell/.test(n) && !/under|chassis|frame/.test(n)) return 'paint';
@@ -287,6 +313,28 @@ const BADGE_RE = /logo|badge|emblem|lettering|decal|brand/i;
  */
 function nameClass(mat: THREE.Material, chain: string): PartClass | null {
   return classifyByName(mat.name) ?? classifyByName(chain);
+}
+
+const isTransparent = (mat: THREE.Material) => {
+  const p = mat as THREE.MeshPhysicalMaterial;
+  return (p.transmission ?? 0) > 0.05 || (mat.transparent && mat.opacity < 0.9);
+};
+
+/** Class of one material slot: names first, then transparency (windows, lamp covers). */
+function slotClassOf(mat: THREE.Material, chain: string): PartClass | null {
+  const byMat = classifyByName(mat.name);
+  const cls = byMat ?? classifyByName(chain);
+  if (!isTransparent(mat)) return cls;
+  if (cls === 'head') return 'lens';
+  if (cls === 'tail') return 'taillens';
+  // A "body" parent must not turn a transparent pane into paint.
+  if (cls !== null && !(cls === 'paint' && byMat === null)) return cls;
+  const c = (mat as THREE.MeshStandardMaterial).color;
+  if (!c) return 'glass';
+  const mx = Math.max(c.r, c.g, c.b);
+  const saturated = mx > 0.2 && (mx - Math.min(c.r, c.g, c.b)) / mx > 0.55;
+  if (saturated && c.r > c.g * 2 && c.r > c.b * 2) return 'taillens';
+  return saturated ? 'keep' : 'glass';
 }
 const GROUND_RE = /shadow|ground|floor|backdrop|\bplane\b|platform|stage/i;
 
@@ -527,12 +575,22 @@ function extractWheelsByGeometry(
   return { replaced, wheels };
 }
 
-function triangleArea(geo: THREE.BufferGeometry, toModel: THREE.Matrix4, start: number, count: number, out: { area: number; yMax: number; yMin: number }): void {
+function triangleArea(
+  geo: THREE.BufferGeometry,
+  toModel: THREE.Matrix4,
+  start: number,
+  count: number,
+  out: { area: number; yMax: number; yMin: number },
+  /** Area counts only triangles that pass (centroid, normal), e.g. the outward-facing outer skin. */
+  accept?: (centroid: THREE.Vector3, normal: THREE.Vector3) => boolean,
+): void {
   const pos = geo.getAttribute('position');
   const index = geo.getIndex();
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const ctr = new THREE.Vector3();
   const step = Math.max(1, Math.floor(count / 3 / 4000)); // sample big meshes
   for (let t = start / 3; t < (start + count) / 3; t += step) {
     const ia = index ? index.getX(t * 3) : t * 3;
@@ -541,10 +599,206 @@ function triangleArea(geo: THREE.BufferGeometry, toModel: THREE.Matrix4, start: 
     a.fromBufferAttribute(pos, ia).applyMatrix4(toModel);
     b.fromBufferAttribute(pos, ib).applyMatrix4(toModel);
     c.fromBufferAttribute(pos, ic).applyMatrix4(toModel);
-    out.area += b.clone().sub(a).cross(c.clone().sub(a)).length() * 0.5 * step;
     out.yMax = Math.max(out.yMax, a.y, b.y, c.y);
     out.yMin = Math.min(out.yMin, a.y, b.y, c.y);
+    n.subVectors(b, a).cross(ctr.subVectors(c, a));
+    if (accept && !accept(ctr.copy(a).add(b).add(c).multiplyScalar(1 / 3), n)) continue;
+    out.area += n.length() * 0.5 * step;
   }
+}
+
+/**
+ * Fills window openings that have no glass (AI-generated bodies ship with holes): rasterises the
+ * side-facing outer skin in (z, y), finds enclosed gaps in the upper body and fills them with panes.
+ */
+function autoGlaze(meshes: THREE.Mesh[], model: Map<THREE.Mesh, THREE.Matrix4>, bounds: THREE.Box3): THREE.BufferGeometry | null {
+  let triTotal = 0;
+  for (const m of meshes) triTotal += (m.geometry.getIndex()?.count ?? m.geometry.getAttribute('position').count) / 3;
+  if (triTotal > 60_000) return null;
+  const size = bounds.getSize(new THREE.Vector3());
+  const cell = size.z / 160;
+  const W = Math.ceil(size.z / cell) + 2;
+  const H = Math.ceil(size.y / cell) + 2;
+  const z0 = bounds.min.z - cell;
+  const y0 = bounds.min.y - cell;
+  const cx = (bounds.min.x + bounds.max.x) / 2;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const A = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const C = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  for (const side of [1, -1]) {
+    const cov = new Uint8Array(W * H);
+    const xs = new Float32Array(W * H);
+    for (const m of meshes) {
+      const pos = m.geometry.getAttribute('position');
+      const index = m.geometry.getIndex();
+      const toModel = model.get(m)!;
+      const n = (index ? index.count : pos.count) / 3;
+      for (let t = 0; t < n; t++) {
+        A.fromBufferAttribute(pos, index ? index.getX(t * 3) : t * 3).applyMatrix4(toModel);
+        B.fromBufferAttribute(pos, index ? index.getX(t * 3 + 1) : t * 3 + 1).applyMatrix4(toModel);
+        C.fromBufferAttribute(pos, index ? index.getX(t * 3 + 2) : t * 3 + 2).applyMatrix4(toModel);
+        // Outer skin only: seats and dashboards sit well inside the door line.
+        if (((A.x + B.x + C.x) / 3 - cx) * side < 0.55 * (size.x / 2)) continue;
+        N.subVectors(B, A).cross(C.clone().sub(A)).normalize();
+        if (Math.abs(N.x) < 0.2) continue;
+        const d = (B.y - C.y) * (A.z - C.z) + (C.z - B.z) * (A.y - C.y);
+        if (Math.abs(d) < 1e-12) continue;
+        const zi0 = Math.max(0, Math.floor((Math.min(A.z, B.z, C.z) - z0) / cell));
+        const zi1 = Math.min(W - 1, Math.ceil((Math.max(A.z, B.z, C.z) - z0) / cell));
+        const yi0 = Math.max(0, Math.floor((Math.min(A.y, B.y, C.y) - y0) / cell));
+        const yi1 = Math.min(H - 1, Math.ceil((Math.max(A.y, B.y, C.y) - y0) / cell));
+        for (let yi = yi0; yi <= yi1; yi++) {
+          for (let zi = zi0; zi <= zi1; zi++) {
+            const pz = z0 + (zi + 0.5) * cell;
+            const py = y0 + (yi + 0.5) * cell;
+            const l1 = ((B.y - C.y) * (pz - C.z) + (C.z - B.z) * (py - C.y)) / d;
+            const l2 = ((C.y - A.y) * (pz - C.z) + (A.z - C.z) * (py - C.y)) / d;
+            const l3 = 1 - l1 - l2;
+            if (l1 < -0.02 || l2 < -0.02 || l3 < -0.02) continue;
+            const x = Math.abs(l1 * A.x + l2 * B.x + l3 * C.x - cx);
+            if (!cov[yi * W + zi] || x > xs[yi * W + zi]) xs[yi * W + zi] = x;
+            cov[yi * W + zi] = 1;
+          }
+        }
+      }
+    }
+    // Everything not reachable from the border is enclosed.
+    const outside = new Uint8Array(W * H);
+    const stack: number[] = [0];
+    while (stack.length) {
+      const q = stack.pop()!;
+      if (cov[q] || outside[q]) continue;
+      outside[q] = 1;
+      const x = q % W;
+      const y = (q / W) | 0;
+      if (x > 0) stack.push(q - 1);
+      if (x < W - 1) stack.push(q + 1);
+      if (y > 0) stack.push(q - W);
+      if (y < H - 1) stack.push(q + W);
+    }
+    const seen = new Uint8Array(W * H);
+    for (let start = 0; start < W * H; start++) {
+      if (cov[start] || outside[start] || seen[start]) continue;
+      const cells: number[] = [];
+      const st = [start];
+      seen[start] = 1;
+      while (st.length) {
+        const q = st.pop()!;
+        cells.push(q);
+        const x = q % W;
+        const y = (q / W) | 0;
+        for (const r of [x > 0 ? q - 1 : -1, x < W - 1 ? q + 1 : -1, y > 0 ? q - W : -1, y < H - 1 ? q + W : -1]) {
+          if (r >= 0 && !cov[r] && !outside[r] && !seen[r]) {
+            seen[r] = 1;
+            st.push(r);
+          }
+        }
+      }
+      const yMean = y0 + (cells.reduce((acc, q) => acc + ((q / W) | 0), 0) / cells.length + 0.5) * cell;
+      if (cells.length < 40 || yMean < bounds.min.y + 0.5 * size.y) continue;
+      // Row runs become quads set just inside the frame.
+      const inCell = new Set(cells);
+      for (const q of cells) {
+        if (inCell.has(q - 1) && (q - 1) % W !== W - 1) continue;
+        let e = q;
+        while (inCell.has(e + 1) && (e + 1) % W !== 0) e++;
+        const yi = (q / W) | 0;
+        const left = xs[q - 1];
+        const right = xs[e + 1];
+        const x = cx + side * (Math.min(left || right, right || left) - 0.012 * size.x);
+        const za = z0 + (q % W) * cell;
+        const zb = z0 + ((e % W) + 1) * cell;
+        const ya = y0 + yi * cell;
+        const yb = ya + cell;
+        const quad = side > 0 ? [[za, ya], [zb, yb], [zb, ya], [za, ya], [za, yb], [zb, yb]] : [[za, ya], [zb, ya], [zb, yb], [za, ya], [zb, yb], [za, yb]];
+        for (const [z, y] of quad) {
+          positions.push(x, y, z);
+          normals.push(side, 0, 0);
+        }
+      }
+    }
+  }
+  if (!positions.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  return geo;
+}
+
+/** Clean tyre, dished rim and hub cap for wheels that are only a lumpy blob in the source. */
+function proceduralWheel(radius: number, halfWidth: number, outward: number): PartTemplate[] {
+  const R = radius;
+  const w = halfWidth;
+  const lathe = (pts: [number, number][]) => {
+    // (r, along-axis) pairs; mirrored for the left side with the winding kept.
+    let list = pts.map(([r, a]) => new THREE.Vector2(r * R, a * w * outward));
+    if (outward > 0) list = list.reverse();
+    const g = new THREE.LatheGeometry(list, 28);
+    g.rotateZ(-Math.PI / 2);
+    return g;
+  };
+  const tyre = lathe([[0.6, -0.8], [0.78, -0.98], [0.93, -0.96], [0.99, -0.74], [1, -0.35], [1, 0.35], [0.99, 0.74], [0.93, 0.96], [0.78, 0.98], [0.6, 0.8]]);
+  const rim = lathe([[0.04, 0.58], [0.24, 0.62], [0.3, 0.52], [0.5, 0.56], [0.62, 0.7], [0.66, 0.9], [0.62, 0.9]]);
+  const cap = lathe([[0, 0.7], [0.1, 0.68], [0.17, 0.62]]);
+  const part = (geometry: THREE.BufferGeometry, cls: PartClass): PartTemplate => ({
+    geometry,
+    matrix: new THREE.Matrix4(),
+    classes: [cls],
+    originals: [],
+    label: 'procedural wheel',
+  });
+  return [part(tyre, 'tire'), part(rim, 'rim'), part(cap, 'chrome')];
+}
+
+/** Material slot of every triangle. */
+function triangleSlots(geo: THREE.BufferGeometry): Uint16Array {
+  const index = geo.getIndex();
+  const tris = (index ? index.count : geo.getAttribute('position').count) / 3;
+  const out = new Uint16Array(tris);
+  for (const g of geo.groups) out.fill(g.materialIndex ?? 0, g.start / 3, (g.start + g.count) / 3);
+  return out;
+}
+
+function usedSlots(geo: THREE.BufferGeometry): Set<number> {
+  return new Set(geo.groups.length ? geo.groups.filter((g) => g.count > 0).map((g) => g.materialIndex ?? 0) : [0]);
+}
+
+/**
+ * Front-projected UVs for lamp surfaces, normalised to the lamp's own bounds so one painted
+ * reflector texture fits any lamp. u runs from the car's centre line outwards.
+ */
+function lampUV(geo: THREE.BufferGeometry, matrix: THREE.Matrix4, slots: Set<number>, centreX: number): THREE.BufferGeometry {
+  const pos = geo.getAttribute('position');
+  const index = geo.getIndex();
+  const used = new Set<number>();
+  const gs = geo.groups.length ? geo.groups : [{ start: 0, count: index ? index.count : pos.count, materialIndex: 0 }];
+  for (const g of gs) {
+    if (!slots.has(g.materialIndex ?? 0)) continue;
+    for (let i = g.start; i < g.start + g.count; i++) used.add(index ? index.getX(i) : i);
+  }
+  const v = new THREE.Vector3();
+  const box = new THREE.Box3();
+  for (const id of used) box.expandByPoint(v.fromBufferAttribute(pos, id).applyMatrix4(matrix));
+  const outward = (box.min.x + box.max.x) / 2 >= centreX;
+  const w = Math.max(1e-6, box.max.x - box.min.x);
+  const h = Math.max(1e-6, box.max.y - box.min.y);
+  const uv = new Float32Array(pos.count * 2);
+  const old = geo.getAttribute('uv');
+  if (old) for (let i = 0; i < pos.count; i++) uv.set([old.getX(i), old.getY(i)], i * 2);
+  for (const id of used) {
+    v.fromBufferAttribute(pos, id).applyMatrix4(matrix);
+    uv[id * 2] = outward ? (v.x - box.min.x) / w : (box.max.x - v.x) / w;
+    uv[id * 2 + 1] = (v.y - box.min.y) / h;
+  }
+  const out = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(geo.attributes)) out.setAttribute(name, attr);
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setIndex(index);
+  geo.groups.forEach((g) => out.addGroup(g.start, g.count, g.materialIndex));
+  return out;
 }
 
 const rawCache = new WeakMap<object, ImageData | null>();
@@ -820,6 +1074,8 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
     regionClass.set(paintKey, 'paint');
     const c = groups.get(paintKey)!.color;
     liveryColor = new THREE.Color().setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace);
+    // Gradient swatches span several regions: shades of the body colour are body.
+    for (const [k, g] of groups) if (!regionClass.has(k) && sameShade(g.color, c)) regionClass.set(k, 'paint');
   }
   let totalTris = 0;
   for (const g of groups.values()) totalTris += g.n;
@@ -837,52 +1093,150 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
     else regionClass.set(k, 'plastic');
   }
 
-  // --- Named-material classification, with a paint guess when no name says "paint".
-  const matClass = new Map<THREE.Material, PartClass | null>();
-  const transmissive = (mat: THREE.Material) => {
-    const p = mat as THREE.MeshPhysicalMaterial;
-    return (p.transmission ?? 0) > 0.05 || (mat.transparent && mat.opacity < 0.75);
-  };
+  // --- Name-based classification per mesh slot (never per material: exporters reuse one
+  // material across unrelated parts, e.g. a lamp's metal also lining the arches), with a
+  // paint guess when no name says "paint".
+  const slotClass = new Map<THREE.Mesh, (PartClass | null)[]>();
   for (const m of bodyMeshes) {
     if (tris.get(m)) continue;
     const chain = nameChain(m, scene);
-    for (const mat of materialsOf(m)) {
-      if (matClass.has(mat)) continue;
-      let cls = nameClass(mat, chain);
-      if (cls === null && transmissive(mat)) cls = 'glass';
-      matClass.set(mat, cls);
-    }
+    slotClass.set(m, materialsOf(m).map((mat) => slotClassOf(mat, chain)));
   }
-  if (![...matClass.values()].includes('paint')) {
+  const paintMats = new Set<THREE.Material>();
+  if (![...slotClass.values()].flat().includes('paint')) {
+    // Score unnamed, untextured materials by their outward-facing outer skin: interior panels and
+    // chassis span the same extents but carry little of it.
+    const cx = (bodyOnly.min.x + bodyOnly.max.x) / 2;
+    const cy = (bodyOnly.min.y + bodyOnly.max.y) / 2;
+    const halfW = (bodyOnly.max.x - bodyOnly.min.x) / 2;
+    const outer = (c: THREE.Vector3, n: THREE.Vector3) => {
+      const dx = c.x - cx;
+      const dy = c.y - cy;
+      const dz = c.z - midZ;
+      const d = (dx / halfW) ** 2 + (dy / (H / 2)) ** 2 + (dz / halfL) ** 2;
+      return d > 0.7 && yRel(c.y) > 0.2 && n.x * dx + n.y * dy + n.z * dz > 0;
+    };
     const stats = new Map<THREE.Material, { area: number; yMax: number; yMin: number }>();
     for (const m of bodyMeshes) {
-      if (tris.get(m)) continue;
+      const list = slotClass.get(m);
+      if (!list) continue;
       const mats = materialsOf(m);
       const gs = m.geometry.groups.length ? m.geometry.groups : [{ start: 0, count: m.geometry.getIndex()?.count ?? m.geometry.getAttribute('position').count, materialIndex: 0 }];
       for (const g of gs) {
         const mat = mats[g.materialIndex ?? 0] ?? mats[0];
-        if (matClass.get(mat) !== null) continue;
-        const s = stats.get(mat) ?? { area: 0, yMax: -Infinity, yMin: Infinity };
-        triangleArea(m.geometry, model.get(m)!, g.start, g.count, s);
-        stats.set(mat, s);
+        if (list[g.materialIndex ?? 0] !== null) continue;
+        const st = stats.get(mat) ?? { area: 0, yMax: -Infinity, yMin: Infinity };
+        triangleArea(m.geometry, model.get(m)!, g.start, g.count, st, outer);
+        stats.set(mat, st);
       }
     }
     let paint: THREE.Material | null = null;
     let area = 0;
-    for (const [mat, s] of stats) {
+    for (const [mat, st] of stats) {
       // Body panels run from the sills to the roofline.
       // Textured paint (AI scans, liveries) would lose its detail if repainted, so keep it.
       if ((mat as THREE.MeshStandardMaterial).map) continue;
-      if (yRel(s.yMax) > 0.8 && yRel(s.yMin) < 0.45 && s.area > area) {
-        area = s.area;
+      if (yRel(st.yMax) > 0.8 && yRel(st.yMin) < 0.45 && st.area > area) {
+        area = st.area;
         paint = mat;
       }
     }
-    if (paint) matClass.set(paint, 'paint');
+    if (paint) {
+      paintMats.add(paint);
+      // Bodies split over several materials (doors, shell, bumpers) are painted as one.
+      for (const [mat, st] of stats) if (!(mat as THREE.MeshStandardMaterial).map && st.area > area * 0.5) paintMats.add(mat);
+    }
   }
-  for (const [mat, cls] of matClass) {
-    if (cls === 'paint' && !liveryColor && (mat as THREE.MeshStandardMaterial).color) liveryColor = (mat as THREE.MeshStandardMaterial).color.clone();
+  // Unnamed panels (doors, bumpers) sharing the body's paint material are paint too.
+  for (const [m, list] of slotClass) materialsOf(m).forEach((mat, i) => list[i] === 'paint' && paintMats.add(mat));
+  for (const [m, list] of slotClass) {
+    materialsOf(m).forEach((mat, i) => {
+      if (list[i] === null && paintMats.has(mat)) list[i] = 'paint';
+    });
   }
+  for (const [m, list] of slotClass) {
+    const mats = materialsOf(m);
+    list.forEach((cls, i) => {
+      if (cls === 'paint' && !liveryColor && (mats[i] as THREE.MeshStandardMaterial).color) liveryColor = (mats[i] as THREE.MeshStandardMaterial).color.clone();
+    });
+  }
+
+  // --- Lamps. One authored mesh often holds both headlights and tail lights, or both sides:
+  // split those off so each lamp gets its own class (by position) and texture mapping.
+  const LAMP = new Set<PartClass | null>(['head', 'tail', 'lens', 'taillens']);
+  const lampZone = new Map<THREE.Mesh, 0 | 1 | 2>(); // front, rear, middle
+  const bodyCx = (bodyOnly.min.x + bodyOnly.max.x) / 2;
+  const bodyW = bodyOnly.max.x - bodyOnly.min.x;
+  const zoneOf = (z: number): 0 | 1 | 2 => {
+    const r = (z - midZ) / halfL;
+    return r < -0.3 ? 0 : r > 0.3 ? 1 : 2;
+  };
+  const zoneClass = (c: PartClass, zone: 0 | 1 | 2): PartClass => {
+    if (zone === 2) return 'keep';
+    if (zone === 0) return c === 'tail' ? 'head' : c === 'taillens' ? 'lens' : c;
+    return c === 'head' ? 'tail' : c === 'lens' ? 'taillens' : c;
+  };
+  for (let k = 0; k < bodyMeshes.length; k++) {
+    const m = bodyMeshes[k];
+    const list = slotClass.get(m);
+    if (!list?.some((c) => LAMP.has(c))) continue;
+    const b = boxOf(m);
+    if (b.max.x - b.min.x < 0.3 * bodyW && b.max.z - b.min.z < 0.7 * halfL) {
+      lampZone.set(m, zoneOf((b.min.z + b.max.z) / 2));
+      continue;
+    }
+    const toModel = model.get(m)!;
+    const geo = m.geometry;
+    const pos = geo.getAttribute('position');
+    const index = geo.getIndex();
+    const slotOf = triangleSlots(geo);
+    const v = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const subs = partitionMesh(m, (t) => {
+      if (!LAMP.has(list[slotOf[t]])) return 100;
+      c.set(0, 0, 0);
+      for (let j = 0; j < 3; j++) c.add(v.fromBufferAttribute(pos, index ? index.getX(t * 3 + j) : t * 3 + j));
+      c.multiplyScalar(1 / 3).applyMatrix4(toModel);
+      return zoneOf(c.z) * 2 + (c.x > bodyCx ? 1 : 0);
+    });
+    const chain = nameChain(m, scene);
+    const replacement: THREE.Mesh[] = [];
+    for (const [key, sub] of subs) {
+      model.set(sub, toModel);
+      tris.set(sub, null);
+      slotClass.set(sub, list);
+      chainOverride.set(sub, chain);
+      if (key < 100) lampZone.set(sub, (key >> 1) as 0 | 1 | 2);
+      replacement.push(sub);
+    }
+    bodyMeshes.splice(k, 1, ...replacement);
+    k += replacement.length - 1;
+  }
+  // A lamp made of many authored parts keeps them; a lone opaque blob gets a painted reflector.
+  const lampSlots = [0, 0];
+  for (const m of bodyMeshes) {
+    const zone = lampZone.get(m);
+    if (zone === undefined || zone === 2) continue;
+    const used = usedSlots(m.geometry);
+    slotClass.get(m)!.forEach((c, i) => {
+      const z = c && used.has(i) ? zoneClass(c, zone) : null;
+      if (z === 'head' || z === 'tail') lampSlots[zone]++;
+    });
+  }
+  const lampStyle = (mat: THREE.Material, tail: boolean, detailed: boolean): PartClass => {
+    const sm = mat as THREE.MeshStandardMaterial;
+    const em = sm.emissive ? lum([sm.emissive.r, sm.emissive.g, sm.emissive.b]) : 0;
+    const glowing = em > 0.05 || /\bleds?\b|drl|bulb|beam|xenon|neon|emissive/i.test(mat.name);
+    const col = sm.color;
+    const red = !!col && col.r > 0.15 && col.r > col.g * 1.8 && col.r > col.b * 1.8;
+    if (tail) {
+      if (glowing || (detailed && red)) return sm.map ? 'tailmap' : 'tail';
+      return detailed ? 'keep' : sm.map ? 'tailmap' : 'taillamp';
+    }
+    if (glowing) return sm.map ? 'headmap' : 'head';
+    return detailed ? 'keep' : sm.map ? 'headmap' : 'headlamp';
+  };
+  const interior = bodyMeshes.some((m) => /interior|seat|dash|steering|cockpit|carpet/i.test(`${nameChain(m, scene)} ${materialsOf(m).map((x) => x.name).join(' ')}`));
 
   const classifyPalette = (list: TriInfo[], wheel: boolean): PartClass[] =>
     wheel ? list.map((t) => (lum(t.color) < 0.3 ? 'tire' : 'rim')) : list.map((t) => regionClass.get(t.region) ?? 'plastic');
@@ -914,24 +1268,36 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
       geometry.setIndex(out);
       classes = order;
     } else {
-      classes = originals.map((mat) => {
+      const zone = lampZone.get(m);
+      const proc = new Set<number>();
+      classes = originals.map((mat, i) => {
         if (wheel) {
-          const c = nameClass(mat, chain);
+          const c = nameClass(mat, chain.replace(GEOM_WHEEL, ''));
           if (c === 'tire') return 'tire';
           // Brakes, nuts, logos on the hub: keep the author's materials.
           if (/brake|caliper|disc|nut|bolt|logo/i.test(`${chain} ${mat.name}`)) return 'keep';
           // Wheels cut out of a body keep their authored (often textured) materials.
           return c === 'rim' || (c === null && !chain.includes(GEOM_WHEEL)) ? 'rim' : 'keep';
         }
-        return matClass.get(mat) ?? 'keep';
+        let c: PartClass = slotClass.get(m)?.[i] ?? 'keep';
+        if (zone !== undefined && LAMP.has(c)) c = zoneClass(c, zone);
+        if ((c === 'head' || c === 'tail') && zone !== undefined && zone !== 2) c = lampStyle(mat, c === 'tail', lampSlots[zone] > 6);
+        if (c === 'headlamp' || c === 'taillamp') proc.add(i);
+        return c;
       });
-      // Name says "light" but it sits at the back: it's a tail light.
-      const centre = boxOf(m).getCenter(new THREE.Vector3());
-      classes = classes.map((c) => (c === 'head' && (centre.z - midZ) / halfL > 0.3 ? 'tail' : c));
-      if (classes.includes('head')) headCentres.push(centre);
+      if (proc.size) geometry = lampUV(geometry, matrix, proc, bodyCx);
+      if (classes.some((c) => c === 'head' || c === 'headlamp' || c === 'headmap' || c === 'lens')) headCentres.push(boxOf(m).getCenter(new THREE.Vector3()));
     }
-    return { geometry, matrix, classes, originals, fixed: wheel && /caliper/i.test(chain) };
+    return { geometry, matrix, classes, originals, label: `${chain} | ${originals.map((o) => o.name).join(",")}`, fixed: wheel && /caliper/i.test(chain) };
   };
+
+  // Authored mirror-smooth metals (roughness ≈ 0) turn the low sun into a bloom flare.
+  for (const m of new Set(meshes.flatMap(materialsOf))) {
+    const sm = m as THREE.MeshStandardMaterial;
+    if (!sm.isMeshStandardMaterial) continue;
+    sm.roughness = Math.max(sm.roughness, sm.metalness > 0.5 ? 0.22 : 0.1);
+    limitGlare(sm);
+  }
 
   // A rig needs wheels on both axles and both sides; anything less renders them as body.
   {
@@ -960,26 +1326,48 @@ function analyse(scene: THREE.Object3D, opts: { hideBadges: boolean; flip: boole
       hub,
       radius: (hubBox.max.y - hubBox.min.y) / 2,
       halfWidth: (hubBox.max.x - hubBox.min.x) / 2,
-      parts: k.meshes.map((m) => makePart(m, true, inv.clone().multiply(model.get(m)!))),
+      parts: k.meshes.some((m) => nameChain(m, scene).includes(GEOM_WHEEL))
+        ? proceduralWheel((hubBox.max.y - hubBox.min.y) / 2, (hubBox.max.x - hubBox.min.x) / 2, Math.sign(hub.x - bodyCx) || 1)
+        : k.meshes.map((m) => makePart(m, true, inv.clone().multiply(model.get(m)!))),
     };
   });
+
+  // Models without any window glass (AI-generated bodies) get panes in their openings.
+  let glazed = false;
+  if (![...slotClass.values()].flat().includes('glass') && ![...regionClass.values()].includes('glass')) {
+    const geo = autoGlaze(bodyMeshes, model, bodyOnly);
+    if (geo) {
+      body.push({ geometry: geo, matrix: new THREE.Matrix4(), classes: ['glass'], originals: [], label: 'autoglaze' });
+      glazed = true;
+    }
+  }
 
   let headlight: THREE.Vector3 | null = null;
   if (headCentres.length) {
     headlight = headCentres.reduce((acc, v) => acc.add(v), new THREE.Vector3()).multiplyScalar(1 / headCentres.length);
     headlight.x = (bodyOnly.min.x + bodyOnly.max.x) / 2;
   }
-  return { body, wheels, box: fullBox, liveryColor, headlight };
+  return { body, wheels, box: fullBox, liveryColor, headlight, interior: interior || glazed };
 }
 
 // ---------------------------------------------------------------------------
 // Instancing
 
+const CLEAR: PartClass[] = ['glass', 'lens', 'taillens'];
+
 function meshFor(part: PartTemplate, mats: CarMaterialSet): THREE.Mesh {
-  const materials = part.classes.map((cls, i) => (cls === 'keep' ? part.originals[Math.min(i, part.originals.length - 1)] : mats.get(cls)));
+  const materials = part.classes.map((cls, i) => {
+    const orig = part.originals[Math.min(i, part.originals.length - 1)];
+    if (cls === 'keep') return orig;
+    if (cls === 'headmap' || cls === 'tailmap') return mats.lights.lampFrom(orig, cls === 'tailmap');
+    return mats.get(cls);
+  });
   const mesh = new THREE.Mesh(part.geometry, materials.length === 1 && !part.geometry.groups.length ? materials[0] : materials);
   part.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
-  mesh.castShadow = true;
+  mesh.userData.classes = part.classes;
+  mesh.userData.label = part.label;
+  // Panes must not cast opaque shadows into the cabin.
+  mesh.castShadow = !part.classes.every((c) => CLEAR.includes(c));
   mesh.receiveShadow = true;
   return mesh;
 }
@@ -993,6 +1381,7 @@ function instantiate(t: Template, spec: FitSpec, source: string): VehicleModel {
     metallic: spec.metallic,
     rim: spec.rim,
     tint: spec.tint,
+    interior: t.interior,
   });
   const root = new THREE.Group();
   root.name = `vehicle:${source}`;
@@ -1067,7 +1456,7 @@ function instantiate(t: Template, spec: FitSpec, source: string): VehicleModel {
 }
 
 function disposeMaterials(mats: CarMaterialSet, root: THREE.Object3D): void {
-  for (const m of [mats.paint, mats.glass, mats.chrome, mats.trim, mats.plastic, mats.plate, mats.tire, mats.rim, mats.lights.head, mats.lights.tail]) m.dispose();
+  for (const m of mats.all()) m.dispose();
   root.removeFromParent();
 }
 

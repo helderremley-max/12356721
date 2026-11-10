@@ -115,7 +115,7 @@ export const PLAYER_CARS: VehicleSpec[] = [
     tagline: 'RWD · 64 л.с. · ржавая классика, всё впереди',
     sources: [custom('zhiga'), garage('kopeyka'), kenney('sedan')],
     length: 4.13, width: 1.62, height: 1.44, wheelDiameter: 0.58,
-    paint: -1, metallic: 0, rim: 0x8a8d90, tint: 0.2, stance: 0, flip: true,
+    paint: -1, metallic: 0, rim: 0x8a8d90, tint: 0.45, stance: 0, flip: true,
     handling: handling({ massKg: 1030, kw: 47, topKmh: 150, drivetrain: 'RWD', grip: 8.6, yawLag: 0.2, rack: [3.4, 1.8], stiffness: 0 }),
   },
   {
@@ -212,6 +212,8 @@ export interface TrafficSpec {
   wheelDiameter: number;
   paints: number[];
   weight: number;
+  /** Model faces backwards after auto-detection. */
+  flip?: boolean;
 }
 
 const CIVIL_PAINTS = [0xdedede, 0x1a1a1c, 0x8c9096, 0x5b1a1a, 0x23324a, 0xc9c3b4, 0x2f3d33, 0x7a7d80];
